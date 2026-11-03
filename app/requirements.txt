@@ -1,0 +1,9 @@
+nextcord>=2.6,<3
+aiomysql>=0.2,<0.3
+glicko2>=2.0
+trueskill>=0.4.5
+emoji>=2.7
+prettytable>=3.8
+# nextcord imports pkg_resources, removed from newer setuptools and absent from python:3.12-slim
+setuptools<81
+Pillow>=10.1,<13

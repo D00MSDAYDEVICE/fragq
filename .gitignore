@@ -1,0 +1,12 @@
+.env
+certs/*.pem
+backups/*
+!backups/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+app/logs/
+app/saved_state.json
+app/config.cfg
+app/locales/compiled/
+site/

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FragQ · fake Discord</title>
+<style>
+  :root { --bg: #313338; --bg2: #2b2d31; --embed: #2b2d31; --text: #dbdee1; --muted: #949ba4; --link: #00a8fc;
+          --mention: rgba(88, 101, 242, .3); --code: #1e1f22; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.375 "gg sans", "Segoe UI", system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px;
+           background: var(--bg2); border-bottom: 1px solid #1e1f22; font-size: 14px; }
+  header b { color: #fff; }
+  select, input { background: var(--code); color: var(--text); border: 1px solid #3f4147; border-radius: 6px; padding: 6px 8px; font: inherit; }
+  #log { padding: 12px 0 90px; }
+  .msg { display: grid; grid-template-columns: 56px 1fr; padding: 4px 16px 4px 0; margin-top: 14px; }
+  .msg:hover { background: #2e3035; }
+  .av { width: 40px; height: 40px; border-radius: 50%; margin: 2px 0 0 16px; display: grid; place-items: center; font-weight: 700;
+        background: #5865f2; color: #fff; font-size: 15px; }
+  .av.bot { background: #1ff2a2; color: #04150e; }
+  .who { font-weight: 600; color: #fff; }
+  .tag { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px; margin-left: 5px; vertical-align: 2px; }
+  .ts { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .reply { color: var(--muted); font-size: 13px; margin-bottom: 2px; }
+  .eph { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .content { white-space: pre-wrap; word-wrap: break-word; }
+  code { background: var(--code); border-radius: 4px; padding: 0 3px; font: 85% Consolas, monospace; }
+  pre.cb { margin: 4px 0 0; padding: 7px 9px; background: #2b2d31; border: 1px solid #1e1f22; border-radius: 4px;
+           font: 13px/1.35 Consolas, monospace; white-space: pre; overflow-x: auto; }
+  .mention { background: var(--mention); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
+  blockquote { margin: 0; padding-left: 12px; border-left: 4px solid #4e5058; }
+  .embed { max-width: 520px; margin-top: 6px; background: var(--embed); border-left: 4px solid #1e1f22; border-radius: 4px;
+           padding: 8px 16px 16px 12px; display: grid; gap: 8px; font-size: 14px; }
+  .e-author { font-size: 13px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .e-title { font-weight: 700; font-size: 16px; color: #fff; }
+  .e-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; }
+  .e-field { grid-column: 1 / -1; min-width: 0; }
+  .e-field.inline { grid-column: auto; }
+  .e-fname { font-weight: 600; color: #fff; margin-bottom: 2px; }
+  .e-fval { white-space: pre-wrap; word-wrap: break-word; }
+  .e-foot { font-size: 12px; color: var(--muted); }
+  .rows { margin-top: 8px; display: grid; gap: 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { border: 0; border-radius: 4px; padding: 0 14px; height: 32px; font: 500 14px inherit; color: #fff; cursor: pointer; }
+  .s1 { background: #5865f2; } .s2 { background: #4e5058; } .s3 { background: #248046; } .s4 { background: #da373c; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn:hover:not(:disabled) { filter: brightness(1.12); }
+  form { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px 18px; background: var(--bg); }
+  form input { width: 100%; padding: 11px 14px; border-radius: 8px; border: 0; background: #383a40; }
+  .edited { color: var(--muted); font-size: 10px; margin-left: 4px; }
+  .sel, .usel select { min-width: 320px; }
+  .e-img { max-width: 400px; margin-top: 4px; border-radius: 4px; }
+  .modal-form { margin-top: 6px; max-width: 440px; display: grid; gap: 10px; padding: 14px 16px; background: var(--bg2); border-radius: 8px; border: 1px solid #1e1f22; }
+  .modal-form label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+  .modal-form input { text-transform: none; font-weight: 400; }
+  .modal-form .btn { justify-self: end; }
+  .usel { display: grid; gap: 6px; justify-items: start; }
+  .usel .ph { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <b>FragQ fake Discord</b>
+  <label>Channel <select id="chan"></select></label>
+  <label>Act as <select id="user"></select></label>
+  <span style="color:var(--muted)">Buttons and messages run the real bot code as the selected member.</span>
+</header>
+<div id="log"></div>
+<form id="say"><input id="text" placeholder="Message as the selected member, e.g. !panel or ++" autocomplete="off"></form>
+<script>
+(function () {
+  "use strict";
+  var state = null, chan = document.getElementById("chan"), user = document.getElementById("user"), log = document.getElementById("log");
+  var STYLE = { 1: "s1", 2: "s2", 3: "s3", 4: "s4" };
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  // Small subset of Discord markdown. Input is escaped first, so only these tags can appear.
+  function md(text) {
+    if (!text) return "";
+    var codes = [], blocks = [];
+    var s = esc(text).replace(/```(?:\w*\n)?([\s\S]*?)\n?```/g, function (_, c) { blocks.push(c); return "\u0001" + (blocks.length - 1) + "\u0001"; })
+      .replace(/`([^`]+)`/g, function (_, c) { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+    s = s.replace(/&lt;@!?(\d+)&gt;/g, function (_, id) { return '<span class="mention">@' + esc(state.names[id] || id) + "</span>"; })
+         .replace(/&lt;@&amp;(\d+)&gt;/g, '<span class="mention">@role</span>')
+         .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/__(.+?)__/g, "<u>$1</u>").replace(/\*(.+?)\*/g, "<i>$1</i>")
+         .replace(/(^|\n)&gt; ?([^\n]*)/g, "$1<blockquote>$2</blockquote>");
+    return s.replace(/\u0000(\d+)\u0000/g, function (_, i) { return "<code>" + codes[i] + "</code>"; })
+      .replace(/\u0001(\d+)\u0001/g, function (_, i) { return '<pre class="cb">' + blocks[i] + "</pre>"; });
+  }
+  function hex(n) { return n == null ? "#1e1f22" : "#" + ("000000" + n.toString(16)).slice(-6); }
+
+  function modalHtml(m) {
+    var f = m.modal, h = '<form class="modal-form" data-msg="' + esc(m.id) + '" data-id="' + esc(f.custom_id) + '"><div class="e-title">' + esc(f.title) + "</div>";
+    f.components.forEach(function (row) {
+      row.components.forEach(function (c) {
+        h += '<label>' + esc(c.label) + '<input name="' + esc(c.custom_id) + '" placeholder="' + esc(c.placeholder || "") + '"' + (c.required ? " required" : "") + "></label>";
+      });
+    });
+    return h + '<button class="btn s1" type="submit">Submit</button></form>';
+  }
+
+  function embedHtml(e, m) {
+    var h = '<div class="embed" style="border-left-color:' + hex(e.color) + '">';
+    if (e.author) h += '<div class="e-author">' + esc(e.author.name) + "</div>";
+    if (e.title) h += '<div class="e-title">' + md(e.title) + "</div>";
+    if (e.description) h += '<div class="e-fval">' + md(e.description) + "</div>";
+    if (e.fields && e.fields.length) {
+      h += '<div class="e-fields">';
+      e.fields.forEach(function (f) {
+        h += '<div class="e-field' + (f.inline ? " inline" : "") + '"><div class="e-fname">' + md(f.name) + '</div><div class="e-fval">' + md(f.value) + "</div></div>";
+      });
+      h += "</div>";
+    }
+    if (e.image && e.image.url) {
+      var src = e.image.url.indexOf("attachment://") === 0 ? (m.attachments || {})[e.image.url.slice(13)] : e.image.url;
+      if (src) h += '<img class="e-img" alt="" src="' + esc(src) + '">';
+    }
+    if (e.footer) h += '<div class="e-foot">' + esc(e.footer.text) + (e.timestamp ? " • " + new Date(e.timestamp).toLocaleTimeString() : "") + "</div>";
+    return h + "</div>";
+  }
+
+  function render() {
+    var msgs = state.messages[chan.value] || [], me = user.options[user.selectedIndex] && user.options[user.selectedIndex].text;
+    var html = "";
+    msgs.forEach(function (m) {
+      if (m.ephemeral_to && m.ephemeral_to !== me) return;
+      var isBot = m.author === "FragQ";
+      html += '<div class="msg"><div class="av' + (isBot ? " bot" : "") + '">' + esc(m.author[0].toUpperCase()) + "</div><div>";
+      if (m.reply_to) html += '<div class="reply">↱ ' + esc(m.reply_to) + " used a command</div>";
+      html += '<span class="who">' + esc(m.author) + "</span>" + (isBot ? '<span class="tag">APP</span>' : "") +
+        '<span class="ts">' + new Date(m.at * 1000).toLocaleTimeString() + "</span>" + (m.edited ? '<span class="edited">(edited)</span>' : "");
+      if (m.content) html += '<div class="content">' + md(m.content) + "</div>";
+      (m.embeds || []).forEach(function (e) { html += embedHtml(e, m); });
+      if (m.modal) html += modalHtml(m);
+      if (m.components && m.components.length) {
+        html += '<div class="rows">';
+        m.components.forEach(function (row) {
+          html += '<div class="row">';
+          row.components.forEach(function (b) {
+            var attrs = ' data-id="' + esc(b.custom_id || "") + '" data-msg="' + esc(m.id) + '"';
+            if (b.type === 3) {  // string select
+              html += '<select class="sel"' + attrs + '><option value="">' + esc(b.placeholder || "Select…") + "</option>" +
+                b.options.map(function (o) { return '<option value="' + esc(o.value) + '">' + esc(o.label + (o.description ? " · " + o.description : "")) + "</option>"; }).join("") +
+                "</select>";
+            } else if (b.type === 5) {  // user select: pick members, then submit
+              html += '<div class="usel"><div class="ph">' + esc(b.placeholder || "Select users") + " (max " + b.max_values + ')</div><select multiple size="5"' + attrs + ' data-max="' + b.max_values + '">' +
+                state.members.map(function (u) { return '<option value="' + esc(u.id) + '">' + esc(u.name) + "</option>"; }).join("") +
+                '</select><button class="btn s1" data-submit="1">Select</button></div>';
+            } else {
+              html += '<button class="btn ' + (STYLE[b.style] || "s2") + '"' + attrs + (b.disabled ? " disabled" : "") + ">" +
+                esc(((b.emoji && b.emoji.name) ? b.emoji.name + " " : "") + (b.label || "")) + "</button>";
+            }
+          });
+          html += "</div>";
+        });
+        html += "</div>";
+      }
+      if (m.ephemeral_to) html += '<div class="eph">👁 Only you can see this</div>';
+      html += "</div></div>";
+    });
+    var atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 40;
+    log.innerHTML = html || '<p style="padding:16px;color:var(--muted)">No messages yet. Type <code>!panel</code> below as the owner to post the queue panel.</p>';
+    if (atBottom) window.scrollTo(0, document.body.scrollHeight);
+  }
+
+  function load() {
+    return fetch("/dev/state").then(function (r) { return r.json(); }).then(function (s) {
+      var first = !state;
+      state = s;
+      if (first) {
+        s.channels.forEach(function (c) { chan.add(new Option("#" + c.name, c.id)); });
+        s.members.forEach(function (m) { user.add(new Option(m.name, m.id)); });
+      }
+      // Don't redraw under an open dropdown, it would lose the selection.
+      var a = document.activeElement;
+      if (!(a && (a.tagName === "SELECT" || a.tagName === "INPUT") && log.contains(a))) render();
+    });
+  }
+  function post(path, body) {
+    body.channel_id = chan.value; body.user_id = user.value;
+    return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(load);
+  }
+  log.addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-id]");
+    if (b) post("/dev/press", { custom_id: b.dataset.id, message_id: b.dataset.msg });
+    var s = e.target.closest("button[data-submit]");
+    if (s) {
+      var sel = s.parentNode.querySelector("select");
+      var vals = Array.prototype.filter.call(sel.options, function (o) { return o.selected; }).map(function (o) { return o.value; });
+      if (vals.length > +sel.dataset.max) return alert("Pick at most " + sel.dataset.max);
+      if (vals.length) post("/dev/press", { custom_id: sel.dataset.id, message_id: sel.dataset.msg, values: vals });
+    }
+  });
+  log.addEventListener("change", function (e) {
+    var sel = e.target.closest("select.sel");
+    if (sel && sel.value) sel.blur(), post("/dev/press", { custom_id: sel.dataset.id, message_id: sel.dataset.msg, values: [sel.value] });
+  });
+  log.addEventListener("submit", function (e) {
+    var f = e.target.closest("form.modal-form");
+    if (!f) return;
+    e.preventDefault();
+    var values = {};
+    Array.prototype.forEach.call(f.querySelectorAll("input[name]"), function (i) { values[i.name] = i.value; });
+    document.activeElement.blur();
+    post("/dev/modal", { custom_id: f.dataset.id, message_id: f.dataset.msg, values: values });
+  });
+  document.getElementById("say").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var t = document.getElementById("text");
+    if (t.value.trim()) post("/dev/say", { text: t.value.trim() });
+    t.value = "";
+  });
+  chan.addEventListener("change", render);
+  user.addEventListener("change", render);
+  load().then(function () { window.scrollTo(0, document.body.scrollHeight); });
+  setInterval(load, 1500);
+})();
+</script>
+</body>
+</html>
