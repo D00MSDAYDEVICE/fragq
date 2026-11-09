@@ -167,6 +167,14 @@ class QueueChannel:
 				default=1,
 				notnull=True
 			),
+			Variables.IntVar(
+				"panel_autorefresh",
+				display="Auto-refresh queue panel",
+				section="General",
+				description="Every this many minutes, re-post the queue panel at the bottom of the channel if chat has pushed it up. Not set = off.",
+				verify=lambda x: 1 <= x <= 1440,
+				verify_message="Auto-refresh must be between 1 and 1440 minutes."
+			),
 			Variables.OptionVar(
 				"rating_system",
 				display="Rating system",

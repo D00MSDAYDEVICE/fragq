@@ -22,7 +22,7 @@ from core.console import log
 from core.database import db
 from core.utils import get_nick
 
-from webui import auth, schema, access, backup
+from webui import auth, schema, access, backup, verify
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PLUGINS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugins")
@@ -272,10 +272,6 @@ async def api_schema(request):
 def settings_dict():
 	key = bot.steam.api_key()
 	return dict(
-		panel=dict(
-			autorepost=bool(bot.settings.get("panel_autorepost")),
-			minutes=int(bot.settings.get("panel_autorepost_minutes") or 5),
-		),
 		steam=dict(
 			api_key_set=bool(key),
 			api_key_hint=key[-4:] if key else None,  # the key itself never leaves the server
@@ -300,21 +296,8 @@ async def api_settings_save(request):
 	if err := owner_error(request):
 		return err
 	body = await read_json(request)
-	steam, panel = body.get("steam") or {}, body.get("panel") or {}
+	steam = body.get("steam") or {}
 	who = request["user"]["name"]
-	if "minutes" in panel:
-		try:
-			minutes = int(panel["minutes"])
-			if not 1 <= minutes <= 1440:
-				raise ValueError
-		except (TypeError, ValueError):
-			msg = "Enter a number of minutes between 1 and 1440."
-			return jerror(400, msg, fields=dict(minutes=msg))
-		await bot.settings.put("panel_autorepost_minutes", minutes)
-		log.info(f"WEBUI| {who} set the queue panel auto-repost interval to {minutes} min.")
-	if "autorepost" in panel:
-		await bot.settings.put("panel_autorepost", bool(panel["autorepost"]))
-		log.info(f"WEBUI| {who} turned {'on' if panel['autorepost'] else 'off'} queue panel auto-repost.")
 	if "api_key" in steam:
 		key = str(steam["api_key"] or "").strip()
 		if key:
@@ -402,6 +385,7 @@ def steam_row_dict(row):
 	return dict(
 		steam_id=row["steam_id"], persona=row.get("persona"), steam_avatar=row.get("avatar_url"),
 		profile_url=row.get("profile_url") or bot.steam.profile_url(row["steam_id"]),
+		verified_by=row.get("verified_by") or "",
 	)
 
 
@@ -414,7 +398,7 @@ def steam_link_dict(request, uid):
 		user_id=str(uid),
 		name=(user.display_name if user else None) or base.get("nick") or str(uid),
 		avatar=str(user.display_avatar.with_size(64)) if user else None,
-		**(steam_row_dict(row) if row else dict(steam_id=None, persona=None, steam_avatar=None, profile_url=None)),
+		**(steam_row_dict(row) if row else dict(steam_id=None, persona=None, steam_avatar=None, profile_url=None, verified_by="")),
 		linked_at=row.get("linked_at") if row else None,
 		pending=dict(steam_row_dict(req), requested_at=req.get("requested_at")) if req else None,
 		can_review=bool(req) and (uid != me or is_owner(me)),
@@ -755,7 +739,7 @@ def connector_dict(c, counts=None):
 	return dict(
 		id=str(c["id"]), name=c["name"], game=c["game"], prefix=c["prefix"], state=bot.connectors.state(c),
 		queues=[str(q) for q in c["queues"] if q in live], unmatched_queue=str(c["unmatched_queue"] or ""),
-		can_results=c["can_results"], can_check=c["can_check"], can_link=c["can_link"],
+		can_results=c["can_results"], can_check=c["can_check"], can_link=c["can_link"], can_export=c["can_export"],
 		allowed_ips=c["allowed_ips"].split() if c["allowed_ips"] else [], rate_limit=c["rate_limit"], expires_at=c["expires_at"],
 		disabled=c["disabled"], requests=c["requests"], last_used_at=c["last_used_at"], last_used_ip=c["last_used_ip"],
 		last_denied_at=c["last_denied_at"], last_denied_ip=c["last_denied_ip"], last_denied_reason=c["last_denied_reason"],
@@ -781,7 +765,7 @@ async def api_connectors(request):
 	return web.json_response(dict(
 		connectors=[connector_dict(c, counts) for c in bot.connectors.guild_connectors(guild.id)],
 		games=[dict(id=k, label=label, emoji=emoji) for k, label, emoji, _ in bot.connectors.GAMES],
-		queues=queues, api_url=public_url(request) + CONNECT, plugins=dict(quakelive="/downloads/minqlx/fragq.py"),
+		queues=queues, public_url=public_url(request), api_url=public_url(request) + CONNECT, plugins=dict(quakelive="/downloads/minqlx/fragq.py"),
 		default_rate=bot.connectors.DEFAULT_RATE, max_rate=bot.connectors.MAX_RATE,
 	))
 
@@ -885,6 +869,10 @@ async def connect_linked(c, body):
 
 async def connect_link(c, body):
 	return await bot.connectors.request_link(c, body)
+
+
+async def connect_steam_links(c, body):
+	return bot.connectors.steam_links(c)
 
 
 async def download_plugin(request):
@@ -1194,6 +1182,9 @@ def make_app():
 	r.add_get("/healthz", healthz)
 	r.add_get("/auth/login", auth.login)
 	r.add_get("/auth/callback", auth.callback)
+	r.add_get("/verify", verify.page)
+	r.add_get("/verify/steam", verify.start)
+	r.add_get("/verify/steam/callback", verify.callback)
 
 	r.add_get("/api/me", api_me)
 	r.add_post("/api/logout", api_logout)
@@ -1255,6 +1246,7 @@ def make_app():
 	r.add_post(CONNECT + "/results", connect_api(connect_results, "can_results"))
 	r.add_post(CONNECT + "/players/linked", connect_api(connect_linked, "can_check"))
 	r.add_post(CONNECT + "/link", connect_api(connect_link, "can_link"))
+	r.add_get(CONNECT + "/steam/links", connect_api(connect_steam_links, "can_export"))
 	r.add_get("/downloads/minqlx/{name}", download_plugin)
 
 	r.add_static("/static", STATIC, append_version=False)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Bot-wide FragQ settings (queue panel auto-repost, Steam API key, ...) edited on the web Settings page.
+Bot-wide FragQ settings (Steam API key, ...) edited on the web Settings page.
 
 Stored in the database next to the channel configs, so they survive updates and are part of
 database backups.
@@ -20,13 +20,15 @@ db.ensure_table(dict(
 ))
 
 DEFAULTS = dict(
-	panel_autorepost=False,         # move buried queue panels back to the bottom of their channel
+	panel_autorepost=False,         # FragQ 1.0.0 only: now the channel setting panel_autorefresh (bot.panel._migrate)
 	panel_autorepost_minutes=5,
 	steam_api_key="",
 	require_steam_link=False,
 )
 # Restored by the Settings page backup; the API key only when the backup includes it.
-BACKUP = ("panel_autorepost", "panel_autorepost_minutes", "require_steam_link")
+BACKUP = ("require_steam_link",)
+# Still read from FragQ 1.0.0 backups: turned into each channel's panel_autorefresh after the restore.
+LEGACY = ("panel_autorepost", "panel_autorepost_minutes")
 
 _values = dict(DEFAULTS)
 

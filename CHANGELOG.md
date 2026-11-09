@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 (2026-11-08)
+
+- **Queue panel follows the players:** when someone joins a queue, FragQ posts the queue panel if the
+  channel doesn't have one, or moves it to the bottom of the channel (like **Move panel down**) if
+  messages have been posted since.
+- **Auto-refresh panel per channel:** a switch at the top right of each channel's **Settings →
+  General** tab re-posts a panel buried by chat every few minutes (5 to start with). It replaces the
+  bot-wide **Auto-repost queue panels** setting on the Settings page; if that was on, every channel is
+  switched on with the same interval. The channel setting is `panel_autorefresh` (minutes, not set = off).
+- **Prove a Steam account:** the public `/verify` page lets a player sign in with Discord and then through
+  Steam, which proves the account is theirs. Each link now records how it was made (claimed, confirmed
+  from a game server, or proved with Steam), shown in **Linked players**. A proof replaces someone else's
+  unproved claim on the account; changing to another account still needs a moderator. Needs `PUBLIC_URL`.
+- **Read linked accounts:** a new connector permission, off by default, for `GET /steam/links`, which
+  returns the Steam and Discord links of the server's members. A key with only this permission needs no queue.
+- **Connectors page:** a **Fragdex** panel with its address and its own connectors. The rest are now under
+  **Additional Connectors**, listed last.
+
 ## 1.0.0 (2026-11-02)
 
 First FragQ release. FragQ is a fork of [PUBobot2](https://github.com/Leshaka/PUBobot2) by Leshaka:

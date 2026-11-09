@@ -19,6 +19,7 @@ Authorization: Bearer fq_...
 | `POST /results` | Send match results | Send one match's result (below) |
 | `POST /players/linked` | Check linked players | `{"steam_ids": ["7656…", …]}` (up to 64): which players have a linked Steam account |
 | `POST /link` | Link Steam accounts from the game | `{"steam_id": "7656…", "name": "in-game name", "discord": "user id or username"}`: ask the member to confirm the link in Discord |
+| `GET /steam/links` | Read linked accounts | Every link of a member of the connector's Discord server ([below](#linked-accounts)) |
 
 Answers are JSON. Refused requests have `"ok": false` and an `error` message:
 
@@ -32,6 +33,31 @@ Answers are JSON. Refused requests have `"ok": false` and an `error` message:
 
 Don't send a `4xx` request again unchanged (except `429`). Do retry when FragQ couldn't be reached or
 answered `5xx`, with the same `match_uid`, so the result is posted once.
+
+## Linked accounts
+
+`GET /steam/links` lists the links of the members of the connector's Discord server. Pending account
+changes aren't included. If the bot can't see the server right now, the answer is `503`.
+
+```json
+{
+  "ok": true,
+  "links": [
+    {
+      "steam_id": "76561198000000000",
+      "discord_id": "200000000000000001",
+      "discord_name": "username",
+      "persona": "Steam name",
+      "verified_by": "steam",
+      "linked_at": 1794194577
+    }
+  ]
+}
+```
+
+`discord_id` is always a string. `persona` and `linked_at` can be `null`. `verified_by` is `""` for a
+link the player only typed in, `"game"` for `!link` confirmed in Discord, and `"steam"` for a Steam
+sign-in on the [`/verify` page](../administration/steam.md#the-verify-page).
 
 ## A result
 

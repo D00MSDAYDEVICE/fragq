@@ -234,6 +234,7 @@ class Guild:
 	def __init__(self, gid, name, owner_id):
 		self.id, self.name, self.owner_id = gid, name, owner_id
 		self.icon = None
+		self.unavailable = False
 		self.roles, self.channels, self.members, self.emojis = [], [], [], []
 		self.roles.append(Role(self, gid, "@everyone"))
 		self.me = None

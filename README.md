@@ -34,9 +34,8 @@ includes its own web interface and ships as a Docker Compose stack.
   linked account waits for a moderator's or admin's **Approve** on the Settings page. Links are
   stored in the database (`fragq_steam_links`), and the Settings page lists them with an **Unlink**
   button. Moderators can still add unlinked players.
-- **Settings page:** **Auto-repost queue panels** moves panels that chat has buried back to the
-  bottom every few minutes (5 by default). **Backup and restore** saves all FragQ settings (channels,
-  queues, Steam links, web panel access) to one file and restores them on a fresh install.
+- **Settings page:** **Backup and restore** saves all FragQ settings (channels, queues, Steam links,
+  web panel access) to one file and restores them on a fresh install.
 - **Player avatars on the queue panel:** a row of profile pictures per queue, with empty slots for
   open places, right above the buttons; queues over 8 players get another row of 8. Linked players
   show their Steam avatar, others their Discord avatar. Pictures are cached in the data volume
@@ -86,7 +85,7 @@ You can also type `!enable_pubobot` in a text channel, as with PUBobot2.
 
 | Who | Access |
 | --- | --- |
-| `DISCORD_OWNER_ID` | Every server the bot is on, plus the **Bot status** page (uptime, log) and the bot-wide **Settings** page (auto-repost, Require Linked Steam IDs, Steam API key, linked players, backup and restore) |
+| `DISCORD_OWNER_ID` | Every server the bot is on, plus the **Bot status** page (uptime, log) and the bot-wide **Settings** page (Require Linked Steam IDs, Steam API key, linked players, backup and restore) |
 | Server owner / members with *Administrator* | The whole server: add or remove channels, all settings |
 | Members with a channel's **Admin role** | Only the channels where they hold that role |
 | Server admins, channel **Admin** and **Moderator** roles | The **Settings** page's Linked players panel, to approve Steam account changes of members of their servers |

@@ -50,6 +50,7 @@ db.ensure_table(dict(
 		dict(cname="can_results", ctype=db.types.bool),
 		dict(cname="can_check", ctype=db.types.bool),
 		dict(cname="can_link", ctype=db.types.bool),
+		dict(cname="can_export", ctype=db.types.bool),       # read every linked account of the server (Fragdex)
 		dict(cname="allowed_ips", ctype=db.types.text),      # space separated IPs / CIDR ranges; empty = any
 		dict(cname="rate_limit", ctype=db.types.int),        # requests per minute; 0 = unlimited
 		dict(cname="expires_at", ctype=db.types.str),        # last valid day (UTC, YYYY-MM-DD); empty = never
@@ -143,7 +144,7 @@ def _decode(row):
 		row["queues"] = [int(x) for x in (queues if isinstance(queues, list) else json.loads(queues))]
 	except (TypeError, ValueError):
 		row["queues"] = []
-	for k in ("can_results", "can_check", "can_link", "disabled"):
+	for k in ("can_results", "can_check", "can_link", "can_export", "disabled"):
 		row[k] = bool(row.get(k))
 	for k in ("requests", "last_used_at", "last_denied_at", "rate_limit", "unmatched_queue"):
 		row[k] = int(row.get(k) or 0)
@@ -198,7 +199,10 @@ def parse_settings(values, guild_id, current=None):
 		queues = list(dict.fromkeys(int(x) for x in values.get("queues") or []))
 	except (TypeError, ValueError):
 		raise ValueError("Unknown queue.")
-	if not queues:
+	perms = {k: bool(values.get(k)) for k in ("can_results", "can_check", "can_link", "can_export")}
+	if not any(perms.values()):
+		raise ValueError("Allow the key to do at least one thing.")
+	if not queues and any(v for k, v in perms.items() if k != "can_export"):  # reading links needs no queue
 		raise ValueError("Choose at least one queue for this connector's results.")
 	if any(q not in in_guild for q in queues):
 		raise ValueError("One of the chosen queues doesn't exist on this server any more.")
@@ -239,9 +243,6 @@ def parse_settings(values, guild_id, current=None):
 		except ValueError:
 			raise ValueError("Expiry must be a date (YYYY-MM-DD), or empty for a key that never expires.")
 
-	perms = {k: bool(values.get(k)) for k in ("can_results", "can_check", "can_link")}
-	if not any(perms.values()):
-		raise ValueError("Allow the key to do at least one thing.")
 	return dict(
 		name=name, game=game, queues=json.dumps([str(q) for q in queues]), unmatched_queue=max(unmatched, 0),
 		allowed_ips=" ".join(allowed), rate_limit=int(rate), expires_at=expires, **perms,
@@ -309,7 +310,7 @@ async def restore(guild_id, x, queues, unmatched, old=None):
 		name=str(x.get("name") or "Connector")[:60], game=game, queues=json.dumps([str(q) for q in queues]),
 		unmatched_queue=unmatched or 0, prefix=str(x.get("prefix") or PREFIX)[:20], key_hash=x["key_hash"],
 		can_results=bool(x.get("can_results")), can_check=bool(x.get("can_check")), can_link=bool(x.get("can_link")),
-		allowed_ips=allowed, rate_limit=rate, expires_at=expires if DATE_RE.match(expires) else "", disabled=bool(x.get("disabled")),
+		can_export=bool(x.get("can_export")), allowed_ips=allowed, rate_limit=rate, expires_at=expires if DATE_RE.match(expires) else "", disabled=bool(x.get("disabled")),
 	)
 	if old:
 		return await _save(old, fields)
@@ -407,7 +408,8 @@ def authenticate(raw_key, ip, need=None):
 		raise ConnectorError(429, f"Rate limit of {c['rate_limit']} requests per minute reached. Try again in {retry} seconds.",
 							 {"Retry-After": str(retry)})
 	if need and not c[need]:
-		what = {"can_results": "send match results", "can_check": "check linked players", "can_link": "link Steam accounts"}[need]
+		what = {"can_results": "send match results", "can_check": "check linked players", "can_link": "link Steam accounts",
+				"can_export": "read linked accounts"}[need]
 		_denied(c, ip, need)
 		raise ConnectorError(403, f"This connector isn't allowed to {what}. Change that on the Connectors page of the FragQ web panel.")
 	c.update(requests=c["requests"] + 1, last_used_at=int(time.time()), last_used_ip=ip[:191])
@@ -433,7 +435,7 @@ def status(c):
 		connector=dict(
 			name=c["name"], game=GAME.get(c["game"], GAME["generic"])[1],
 			queues=[q.name for q, _ in queue_objects(c)],
-			can=dict(results=c["can_results"], check=c["can_check"], link=c["can_link"]),
+			can=dict(results=c["can_results"], check=c["can_check"], link=c["can_link"], export=c["can_export"]),
 		),
 		server_time=int(time.time()),
 	)
@@ -816,6 +818,21 @@ def linked(c, steam_ids):
 	return dict(ok=True, players=out)
 
 
+def steam_links(c):
+	""" GET /steam/links: the links of the members of the connector's Discord server. """
+	guild = dc.get_guild(c["guild_id"])
+	if guild is None or guild.unavailable:
+		raise ConnectorError(503, "The bot can't see this connector's Discord server right now.")
+	out = []
+	for uid, r in bot.steam.links.items():
+		if (member := guild.get_member(uid)) is not None:
+			out.append(dict(
+				steam_id=r["steam_id"], discord_id=str(uid), discord_name=member.name, persona=r.get("persona") or None,
+				verified_by=r.get("verified_by") or "", linked_at=r.get("linked_at") or None,
+			))
+	return dict(ok=True, links=out)
+
+
 def _link_answer(status, message, **extra):
 	return dict(ok=status in ("sent", "already_linked"), status=status, message=message, **extra)
 
@@ -906,7 +923,7 @@ async def on_button(interaction):
 		return
 	await interaction.response.defer()
 	try:
-		st, row = await bot.steam.link(member, p["steam_id"])
+		st, row = await bot.steam.link(member, p["steam_id"], method="game")
 	except bot.Exc.PubobotException as e:
 		await interaction.edit_original_message(embed=error_embed(str(e), title="Steam link failed"), view=None)
 		return

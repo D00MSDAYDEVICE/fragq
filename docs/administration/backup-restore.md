@@ -18,8 +18,8 @@ The bot owner finds it at the bottom of the [Settings page](settings-page.md).
 
 Press **Download backup** to save `fragq-backup-<date>.json`. It contains:
 
-- the bot settings: auto-repost, *Require Linked Steam IDs* and, only if you tick **Include the Steam
-  Web API key**, the key;
+- the bot settings: *Require Linked Steam IDs* and, only if you tick **Include the Steam Web API key**,
+  the key;
 - every channel the bot is enabled on: its settings, whether it is paused, and each queue with its
   settings;
 - the Steam links;

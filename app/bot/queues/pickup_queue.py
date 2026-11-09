@@ -399,6 +399,7 @@ class PickupQueue:
 				await self.start(ctx)
 				return bot.Qr.QueueStarted
 
+			bot.panel.added(self.qc)
 			return bot.Qr.Success
 		else:
 			return bot.Qr.Duplicate

@@ -15,15 +15,11 @@ When Steam account changes are waiting for someone, the **Settings** link in the
 
 The settings save as soon as you change them.
 
-### Auto-repost queue panels
-
-Off by default. When it's on, FragQ checks every channel's [queue panel](../queue-panel/panel.md) every
-few minutes (**Check every … minutes**, 5 by default, 1 to 1440). If chat messages have pushed the panel
-up, FragQ moves it back to the bottom of the channel by posting it again. A panel that is still the
-latest message is left alone, so quiet channels don't get reposts.
-
-This comes on top of each channel's *Keep queue panel at the bottom* setting, which reposts the panel
-below every match start message.
+!!! note "Auto-repost queue panels moved"
+    FragQ 1.0.0 had **Auto-repost queue panels** here, for every channel at once. It is now
+    **Auto-refresh panel** on each channel's **Settings → General** tab (see
+    [Keep it visible](../queue-panel/panel.md#keep-it-visible)). If it was on, every channel was
+    switched on with the same number of minutes when you updated.
 
 ### Require Linked Steam IDs
 

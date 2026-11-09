@@ -6,6 +6,9 @@ When "Require linked Steam IDs" is on (web Settings page), players without a lin
 their Steam ID when they try to join: a Discord pop-up form for buttons and /add, or a message with
 a Link Steam button for !add / ++. Players can also link it any time with !steam / /steam.
 
+A link records how it was made (verified_by): "" = typed in, so only claimed; "game" = !link on a game
+server, confirmed in Discord; "steam" = proved by signing in through Steam on the public /verify page.
+
 The first link is immediate. Changing an existing link to another Steam account is a request that a
 moderator or admin approves (or rejects) on the web Settings page; the old link stays until then.
 
@@ -24,6 +27,7 @@ from nextcord import Embed, Colour, ButtonStyle
 from nextcord.ui import View, Button, Modal, TextInput
 
 from core.client import dc
+from core.config import cfg
 from core.console import log
 from core.database import db
 from core.utils import get_nick, error_embed, ok_embed
@@ -42,6 +46,8 @@ db.ensure_table(dict(
 		dict(cname="profile_url", ctype=db.types.str),
 		dict(cname="linked_at", ctype=db.types.int),
 		dict(cname="updated_at", ctype=db.types.int),
+		dict(cname="verified_by", ctype=db.types.str),  # "", "game" or "steam"
+		dict(cname="verified_at", ctype=db.types.int),
 	],
 	primary_keys=["user_id"]
 ))
@@ -56,6 +62,8 @@ db.ensure_table(dict(
 		dict(cname="avatar_url", ctype=db.types.str),
 		dict(cname="profile_url", ctype=db.types.str),
 		dict(cname="requested_at", ctype=db.types.int),
+		dict(cname="verified_by", ctype=db.types.str),
+		dict(cname="verified_at", ctype=db.types.int),
 	],
 	primary_keys=["user_id"]
 ))
@@ -67,20 +75,22 @@ REFRESH_AFTER = 3 * 86400   # re-read Steam names / avatars this often
 RETRY_MISSING = 3600        # links without an avatar yet (Steam was unreachable) are retried sooner
 REFRESH_EVERY = 1800
 KEYLESS_BATCH = 10          # profile pages read per refresh without an API key
+PROOF = {"": 0, "game": 1, "steam": 2}  # how a link was made, weakest first
 
 links = {}     # user_id -> row
 requests = {}  # user_id -> pending change (same columns as a link, plus requested_at)
 _next_refresh = 0
 _refreshing = False
+_verify_lock = asyncio.Lock()
 
 
 async def load():
 	links.clear()
 	for row in await db.select(["*"], "fragq_steam_links"):
-		links[row["user_id"]] = row
+		links[row["user_id"]] = dict(row, verified_by=row.get("verified_by") or "")
 	requests.clear()
 	for row in await db.select(["*"], "fragq_steam_requests"):
-		requests[row["user_id"]] = row
+		requests[row["user_id"]] = dict(row, verified_by=row.get("verified_by") or "")
 
 
 def api_key():
@@ -93,6 +103,11 @@ def required():
 
 def get_link(user_id):
 	return links.get(user_id)
+
+
+def verify_url():
+	""" The public /verify page, or "" without a usable PUBLIC_URL. """
+	return f"{cfg.WS_ROOT_URL}/verify" if cfg.WS_ROOT_URL.startswith(("https://", "http://")) else ""
 
 
 # ------------------------------------------------------------------ Steam ids and the Web API
@@ -190,11 +205,24 @@ def profile_url(steam_id):
 	return f"https://steamcommunity.com/profiles/{steam_id}"
 
 
+def _owner(steam_id, user_id):
+	""" The link of another member to this Steam account, if there is one. """
+	return next((r for r in links.values() if r["steam_id"] == steam_id and r["user_id"] != user_id), None)
+
+
 def _taken(steam_id, user_id):
-	return any(r["steam_id"] == steam_id and r["user_id"] != user_id for r in links.values())
+	return _owner(steam_id, user_id) is not None
 
 
-async def lookup(user, text):
+def _proof(same, method, now):
+	""" (verified_by, verified_at) of a link; `same` is the player's link to this account, if any. A stronger proof stays. """
+	have = same.get("verified_by") or ""
+	if not method or PROOF[method] < PROOF[have]:
+		return have, same.get("verified_at")
+	return method, now
+
+
+async def lookup(user, text, method=""):
 	""" Resolve what a player typed to a Steam account; returns a link row (not stored yet). """
 	steam_id, vanity = parse(text)
 	key = api_key()
@@ -228,6 +256,7 @@ async def lookup(user, text):
 	now = int(time.time())
 	old = links.get(user.id)
 	same = old if old and old["steam_id"] == steam_id else {}
+	verified_by, verified_at = _proof(same, method, now)
 	return dict(
 		user_id=user.id,
 		steam_id=steam_id,
@@ -237,6 +266,8 @@ async def lookup(user, text):
 		profile_url=(player or {}).get("profileurl") or profile_url(steam_id),
 		linked_at=same.get("linked_at") or now,
 		updated_at=now,
+		verified_by=verified_by,
+		verified_at=verified_at,
 	)
 
 
@@ -245,20 +276,26 @@ async def _store(row):
 	links[row["user_id"]] = row
 
 
-async def link(user, text):
+async def _request(row):
+	""" Store a change of an existing link, for a moderator to approve. """
+	req = {k: row[k] for k in ("user_id", "steam_id", "nick", "persona", "avatar_url", "profile_url", "verified_by", "verified_at")}
+	req["requested_at"] = int(time.time())
+	await db.insert("fragq_steam_requests", req, on_dublicate="replace")
+	requests[row["user_id"]] = req
+	return req
+
+
+async def link(user, text, method=""):
 	"""
-	Link a Discord user to a Steam account. Returns (status, row):
+	Link a Discord user to a Steam account. `method` is how it was proved ("game"), if it was. Returns (status, row):
 	  "linked"    - first link, or the same account again (refreshes the name and picture);
 	  "pending"   - a change to another account, waiting for a moderator's approval;
 	  "cancelled" - the player's current account again while a change was pending: the request is dropped.
 	"""
-	row = await lookup(user, text)
+	row = await lookup(user, text, method)
 	old = links.get(user.id)
 	if old and old["steam_id"] != row["steam_id"]:
-		req = {k: row[k] for k in ("user_id", "steam_id", "nick", "persona", "avatar_url", "profile_url")}
-		req["requested_at"] = int(time.time())
-		await db.insert("fragq_steam_requests", req, on_dublicate="replace")
-		requests[user.id] = req
+		req = await _request(row)
 		log.info(f"{get_nick(user)} ({user.id}) asked to change their Steam account {old['steam_id']} -> {row['steam_id']}.")
 		return "pending", req
 	await _store(row)
@@ -270,20 +307,91 @@ async def link(user, text):
 	return "linked", row
 
 
+async def _profile(steam_id):
+	""" The Steam profile, or {} if it can't be read: a failure here must not fail a verification. """
+	try:
+		if key := api_key():
+			return (await summaries([steam_id], key)).get(steam_id) or {}
+		return await community_profile(steam_id=steam_id) or {}
+	except Exception as e:
+		log.info(f"Couldn't read the Steam profile of {steam_id} while verifying: {e}")
+		return {}
+
+
+async def _remove_claim(owner, steam_id):
+	""" Someone proved they own the Steam account `owner` had only claimed. """
+	await unlink(owner["user_id"])
+	log.info(f"Steam account {steam_id} was proved by someone else: removed the claim of {owner.get('nick') or owner['user_id']}.")
+
+
+async def _tell_removed(owner):
+	await notify(owner["user_id"], (
+		f"Your Discord account was linked to the Steam account {owner.get('persona') or owner['steam_id']} ({owner['steam_id']}). "
+		"Someone has proved they own that account by signing in through Steam, so your link was removed. "
+		"If it is yours, ask a server admin; otherwise link your own account with !steam."
+	))
+
+
+async def verify(user_id, nick, steam_id):
+	"""
+	A member proved they own a Steam account by signing in through Steam. Returns (status, row):
+	  "linked"  - no link yet, or already this account. A claim on it by someone else is removed;
+	  "pending" - linked to another account: a moderator approves the change, as for any other change;
+	  "taken"   - another member has proved this account already (row is None).
+	"""
+	player = await _profile(steam_id)
+	async with _verify_lock:  # the checks and the writes below must not interleave with another sign-in
+		owner = _owner(steam_id, user_id)
+		if owner and owner.get("verified_by"):
+			log.info(f"{nick} ({user_id}) proved Steam account {steam_id}, but it is already proved by {owner['user_id']}.")
+			return "taken", None
+		now = int(time.time())
+		old = links.get(user_id)
+		same = old if old and old["steam_id"] == steam_id else {}
+		row = dict(
+			user_id=user_id,
+			steam_id=steam_id,
+			nick=str(nick)[:191],
+			persona=player.get("personaname") or same.get("persona"),
+			avatar_url=player.get("avatarmedium") or same.get("avatar_url"),
+			profile_url=player.get("profileurl") or profile_url(steam_id),
+			linked_at=same.get("linked_at") or now,
+			updated_at=now,
+			verified_by="steam",
+			verified_at=now,
+		)
+		if old and not same:  # the claim, if any, stays until a moderator approves this
+			req = await _request(row)
+			log.info(f"{nick} ({user_id}) proved Steam account {steam_id} and asked to change from {old['steam_id']}.")
+			return "pending", req
+		if owner:
+			await _remove_claim(owner, steam_id)
+		await _store(row)
+		log.info(f"{nick} ({user_id}) verified Steam account {steam_id}.")
+	if owner:
+		await _tell_removed(owner)
+	return "linked", row
+
+
 async def approve(user_id):
 	""" Apply a pending change. Returns the new link row; raises ValueError if it can't be applied. """
 	req = requests.get(user_id)
 	if req is None:
 		raise bot.Exc.ValueError("This player has no pending Steam account change.")
-	if _taken(req["steam_id"], user_id):
+	owner = _owner(req["steam_id"], user_id)
+	if owner and (owner.get("verified_by") or req.get("verified_by") != "steam"):  # proof beats a claim, nothing else
 		raise bot.Exc.ValueError(
 			"That Steam account is now linked to another Discord member. Reject the request, or unlink the other member first."
 		)
 	now = int(time.time())
-	row = {k: req[k] for k in ("user_id", "steam_id", "nick", "persona", "avatar_url", "profile_url")}
+	row = {k: req[k] for k in ("user_id", "steam_id", "nick", "persona", "avatar_url", "profile_url", "verified_by", "verified_at")}
 	row.update(linked_at=now, updated_at=now)
+	if owner:
+		await _remove_claim(owner, req["steam_id"])
 	await _store(row)
 	await reject(user_id)
+	if owner:
+		await _tell_removed(owner)
 	return row
 
 
@@ -315,6 +423,8 @@ async def restore(rows):
 			user_id=uid, steam_id=sid, nick=str(r.get("nick") or "")[:191] or None,
 			persona=r.get("persona"), avatar_url=r.get("avatar_url"), profile_url=r.get("profile_url") or profile_url(sid),
 			linked_at=int(r.get("linked_at") or now), updated_at=0,  # 0: re-read the name and picture soon
+			verified_by=r.get("verified_by") if r.get("verified_by") in PROOF else "",
+			verified_at=int(r["verified_at"]) if r.get("verified_at") else None,
 		))
 		added += 1
 	return added, skipped
@@ -339,7 +449,10 @@ def result_text(status, row, gt=lambda text: text):
 			steam=describe(row), old=describe(old) if old else "—")
 	if status == "cancelled":
 		return gt("Your Steam account change was cancelled. You stay linked to {steam}.").format(steam=describe(row))
-	return gt("Linked to Steam {steam}.").format(steam=describe(row))
+	text = gt("Linked to Steam {steam}.").format(steam=describe(row))
+	if not row.get("verified_by") and (url := verify_url()):
+		text += " " + gt("Prove it's yours by signing in through Steam: {url}").format(url=url)
+	return text
 
 
 def describe(row):
@@ -402,6 +515,8 @@ def prompt_view(queues=None):
 	view.add_item(Button(
 		style=ButtonStyle.primary, label="Link Steam", emoji="🔗", custom_id=f"{PREFIX}steam_prompt:{(queues or '')[:60]}"
 	))
+	if url := verify_url():
+		view.add_item(Button(style=ButtonStyle.link, label="Verify with Steam", url=url))
 	return view
 
 

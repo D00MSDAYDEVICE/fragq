@@ -30,7 +30,7 @@ docker compose up -d
 | Variable | Default | Purpose |
 |---|---|---|
 | `SITE_HOST` | empty (`localhost`) | Domain name(s) or IP address(es) of the web panel, comma separated |
-| `PUBLIC_URL` | empty | The full address, such as `https://fragq.example.com` or `https://192.168.1.50:8443`. `PUBLIC_URL/auth/callback` must be a redirect in the developer portal. |
+| `PUBLIC_URL` | empty | The full address, such as `https://fragq.example.com` or `https://192.168.1.50:8443`. `PUBLIC_URL/auth/callback` must be a redirect in the developer portal. The [`/verify` page](steam.md#the-verify-page) needs it too. |
 | `HTTP_PORT` / `HTTPS_PORT` | `80` / `443` | Ports published on the host |
 | `TLS_MODE` | `auto` | `auto`, `internal`, `custom` or `off`; see [HTTPS and ports](https.md) |
 | `ACME_EMAIL` | empty | E-mail for Let's Encrypt notices |

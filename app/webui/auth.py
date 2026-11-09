@@ -12,7 +12,7 @@ import json
 import os
 import secrets
 import time
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import aiohttp
 from aiohttp import web
@@ -23,6 +23,7 @@ from core.console import log
 COOKIE = "fragq_session"
 STATE_COOKIE = "fragq_oauth_state"
 DISCORD_API = "https://discord.com/api/v10"
+RETURN_PATHS = ("/verify",)   # where /auth/login?next= may send someone back to, besides /
 
 
 def _load_secret() -> bytes:
@@ -109,6 +110,8 @@ async def login(request: web.Request):
 	if not (cfg.DC_CLIENT_ID and cfg.DC_CLIENT_SECRET):
 		raise web.HTTPServiceUnavailable(text="Discord OAuth is not configured: set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET.")
 	state = secrets.token_urlsafe(24)
+	target = request.query.get("next")
+	saved = dict(state=state, next=target if target in RETURN_PATHS else "/", exp=int(time.time() + 600))
 	query = urlencode(dict(
 		client_id=cfg.DC_CLIENT_ID,
 		redirect_uri=redirect_uri(request),
@@ -118,17 +121,19 @@ async def login(request: web.Request):
 		prompt="none",
 	))
 	resp = web.HTTPFound(f"https://discord.com/oauth2/authorize?{query}")
-	resp.set_cookie(STATE_COOKIE, state, max_age=600, httponly=True, samesite="Lax", secure=_secure(request), path="/auth")
+	resp.set_cookie(STATE_COOKIE, sign(saved), max_age=600, httponly=True, samesite="Lax", secure=_secure(request), path="/auth")
 	return resp
 
 
 async def callback(request: web.Request):
 	state = request.query.get("state")
 	code = request.query.get("code")
+	saved = unsign(request.cookies.get(STATE_COOKIE, "")) or {}
+	target = saved.get("next") if saved.get("next") in RETURN_PATHS else "/"
 	if request.query.get("error"):
-		raise web.HTTPFound("/?login_error=" + request.query.get("error"))
-	if not state or not code or not hmac.compare_digest(state, request.cookies.get(STATE_COOKIE, "")):
-		raise web.HTTPFound("/?login_error=state")
+		raise web.HTTPFound(f"{target}?login_error=" + quote(request.query.get("error")))
+	if not state or not code or not hmac.compare_digest(state.encode(), str(saved.get("state", "")).encode()):
+		raise web.HTTPFound(f"{target}?login_error=state")
 
 	try:
 		async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
@@ -150,7 +155,7 @@ async def callback(request: web.Request):
 					raise ValueError(me.get("message") or r.status)
 	except Exception as e:
 		log.error(f"WEBUI| OAuth login failed: {e}")
-		raise web.HTTPFound("/?login_error=discord")
+		raise web.HTTPFound(f"{target}?login_error=discord")
 
 	payload = dict(
 		id=str(me["id"]),
@@ -160,7 +165,7 @@ async def callback(request: web.Request):
 		exp=int(time.time() + cfg.WS_SESSION_DAYS * 86400),
 	)
 	log.info(f"WEBUI| {payload['username']} ({payload['id']}) logged in.")
-	resp = web.HTTPFound("/")
+	resp = web.HTTPFound(target)
 	resp.set_cookie(
 		COOKIE, sign(payload), max_age=cfg.WS_SESSION_DAYS * 86400,
 		httponly=True, samesite="Lax", secure=_secure(request), path="/"

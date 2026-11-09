@@ -43,9 +43,9 @@ or be a server admin.
     |---|---|
     | **Name** | Anything that tells connectors apart, such as *CA server #1* |
     | **Game** | Generic, Apex Legends, Battlefield 6, Counter-Strike 2, Overwatch 2 or Quake Live. It sets the icon and colour of posted results; the format is the same for every game. Use **Generic** for anything not listed. |
-    | **Queues** | The queues this game server plays. A connector can serve several queues, and a queue can have several connectors. |
+    | **Queues** | The queues this game server plays. A connector can serve several queues, and a queue can have several connectors. A key that only reads linked accounts needs none. |
     | **Results without a FragQ match** | Where results go when FragQ can't find the match (see below): one of the connector's queues, or nowhere (stored only) |
-    | **What the key can do** | *Send match results*, *Check linked players* and *Link Steam accounts from the game*. Untick what the game server doesn't need. |
+    | **What the key can do** | *Send match results*, *Check linked players* and *Link Steam accounts from the game*. Untick what the game server doesn't need. *Read linked accounts* is off by default and is for tools such as Fragdex, not game servers: it reads every Steam and Discord link of this server's members. |
     | **Rate limit** | Requests per minute, 60 by default. 0 = unlimited. |
     | **Expires** | The last day the key works (UTC). Empty = never. |
     | **Allowed IPs** | IP addresses or ranges the key may be used from, one per line, such as `203.0.113.10` or `198.51.100.0/24`. Empty = any address. Use the game server's public address. |
@@ -54,6 +54,18 @@ or be a server admin.
    Copy it now: FragQ only keeps a hash of it.
 
 Give the game server the **Connector API address** shown at the top of the page, and the key.
+
+## Connect Fragdex
+
+[Fragdex](https://d00msdaydevice.github.io/fragdex/) can read which Discord account each member linked to their
+Steam account, and whether they proved it. It has its own **Fragdex** panel on the Connectors page:
+
+1. Press **Create Fragdex connector**. It only needs a name, and can only read linked accounts.
+2. Copy the key. It is shown once.
+3. In Fragdex, open **Settings → FragQ links** and enter the **FragQ address** from the panel and the key.
+
+Keys with only the *Read linked accounts* permission are listed in this panel. All other connectors are
+under **Additional Connectors**.
 
 ## Manage connectors
 
@@ -66,7 +78,7 @@ something the key isn't allowed to do).
 | Button | What it does |
 |---|---|
 | **Edit** | Change any setting. The key stays the same. |
-| **Send test result** | Posts a made-up result, marked as a test, in the connector's channel, so you can see what results look like |
+| **Send test result** | Posts a made-up result, marked as a test, in the connector's channel, so you can see what results look like. Not on Fragdex connectors. |
 | **Disable** / **Enable** | Refuse the key for now without deleting the connector |
 | **Replace key** | A new key with the same settings. The old key stops working immediately. Do this if a key leaks. |
 | **Delete** | Remove the connector and its key. Results already posted stay in Discord. |

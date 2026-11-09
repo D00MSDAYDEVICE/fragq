@@ -31,20 +31,26 @@ Any of these, by someone with the channel's **Admin role** (or *Queue panel* acc
 - `!panel` in the channel.
 - `/channel panel` (action *post*).
 
+You don't have to: when a player joins a queue on a channel that has no panel, FragQ posts one by itself.
+
 There is one panel per channel. Posting it again moves it to the bottom of the channel: the old message
 is deleted and a new one is posted. The panel is remembered across restarts.
 
 ## Keep it visible
 
-By default the panel is **re-posted below the match message** every time a match starts, so it doesn't
-get buried under the match. Turn that off with Channel settings → **Messages** → *Keep queue panel at the
-bottom* (`panel_repost`). You can also move it down at any time with **Move panel down** in the web panel or
-`!panel` again.
+FragQ moves the panel back to the bottom of the channel (the same as **Move panel down**):
 
-For busy channels, the bot owner can turn on **Auto-repost queue panels** on the
-[Settings page](../administration/settings-page.md#auto-repost-queue-panels): every few minutes (5 by
-default), any panel that chat has pushed up is moved back to the bottom. Panels that are still the
-latest message stay where they are.
+- **When a player joins a queue**, with the Join button, `!add`, `++` or `/add`. FragQ waits a moment
+  for its reply, then moves the panel below it. If nothing has been posted since the panel, it stays
+  where it is.
+- **When a match starts**: the panel is re-posted below the match message. Turn that off with Channel
+  settings → **Messages** → *Keep queue panel at the bottom* (`panel_repost`).
+- **Every few minutes, if chat has buried it**, when **Auto-refresh panel** is on. It's at the top
+  right of the channel's **Settings → General** tab: turn it on, set the minutes (5 to start with, 1 to
+  1440) and save. A panel that is still the latest message is left alone, so quiet channels don't get
+  reposts. In chat: `/channel set panel_autorefresh 5`, and `none` to turn it off.
+
+You can also move it down at any time with **Move panel down** in the web panel or `!panel` again.
 
 ## Remove it
 

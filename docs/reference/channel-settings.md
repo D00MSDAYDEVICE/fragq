@@ -23,6 +23,7 @@ Durations are written like `1h 30m`, `45m` or `00:15:00`. Roles and channels are
 | Whitelist role | `whitelist_role` | role | not set | If set, only players with this role will be able to add to queues. |
 | Auto ready limit | `max_auto_ready` | duration | `00:15:00` | Set limit on how long !auto_ready duration can be. Disable to prohibit the command. |
 | Description | `description` | multi-line text | not set | Set an answer on '!help' command. |
+| Auto-refresh queue panel | `panel_autorefresh` | number | not set | Every this many minutes, re-post the queue panel at the bottom of the channel if chat has pushed it up. Not set = off. |
 
 ## Auto-remove
 

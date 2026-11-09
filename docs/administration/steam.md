@@ -32,6 +32,35 @@ join goes through. See [Linking Steam](../playing/steam.md) for what players see
 - [Moderators can still add](../queue-panel/moderators.md#add-player) players who haven't linked.
 - With the switch off, linking is voluntary and nobody is asked.
 
+## How a link was made
+
+Typing a Steam ID proves nothing: anyone can paste someone else's. FragQ records how each link was made
+and shows it in **Linked players**:
+
+| Shown | How it was made |
+|---|---|
+| **Claimed** | Typed in with `!steam`, `/steam` or the pop-up form. All links from before this feature are claimed. |
+| **In-game** | `!link` on a game server, confirmed in a Discord direct message |
+| **Steam proven** | The player signed in through Steam on the `/verify` page |
+
+Running `!steam` again on the same account never lowers this.
+
+## The /verify page
+
+Players prove an account at `PUBLIC_URL/verify`, such as `https://fragq.example.com/verify`. They sign in
+with Discord, then through Steam. FragQ never sees their Steam password; Steam only tells it which account
+signed in. The page needs `PUBLIC_URL` in [`.env`](env.md) and says so if it isn't set. There is nothing to
+add in the Discord developer portal: the login uses the redirect you already have.
+
+FragQ links the page in the **Link Steam** prompt and in the reply to `!steam`. What the proof does:
+
+| Situation | Result |
+|---|---|
+| The player has no link, or is already linked to this account | Linked and marked **Steam proven** |
+| Another member has only **claimed** this account | Their link is removed and they get a direct message; the player is linked |
+| Another member has **proved** this account (Steam or in-game) | Refused. An admin has to sort it out. |
+| The player is linked to a different account | A change request, marked **Steam proven**, for a moderator to approve |
+
 ## Approving Steam account changes
 
 A player's **first** link is immediate. After that, switching to **another** Steam account with
@@ -65,13 +94,14 @@ Other rules:
 - A new request replaces the player's previous pending one. Submitting their current account again
   cancels it.
 - If someone else has linked the requested account in the meantime, **Approve** refuses; reject the
-  request, or unlink the other member first.
+  request, or unlink the other member first. The exception is a **Steam proven** request for an account
+  another member has only claimed: approving it removes that claim and tells the member.
 - **Unlink** also drops a pending change.
 
 ## Linked players
 
 The **Linked players** table lists every link: the Discord member, the Steam name and avatar, the
-SteamID64 (a link to the profile) and when it was linked. Search by name or Steam ID. Moderators and
+SteamID64 (a link to the profile), [how it was made](#how-a-link-was-made) and when it was linked. Search by name or Steam ID. Moderators and
 admins only see members of their own servers.
 
 **Unlink** removes a link, for example when someone linked an account that isn't theirs. One Steam

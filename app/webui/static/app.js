@@ -938,33 +938,13 @@
   }
 
   function botSettingsPanel(s) {
-    var st = s.steam, pn = s.panel;
+    var st = s.steam;
     function save(payload, busy, errEl) {
       busy.disabled = true;
-      return api("PUT", "/api/settings", payload).then(function (r) { st = r.steam; pn = r.panel; draw(); errEl.show(null); return true; })
-        .catch(function (e) { errEl.show(e.fields && (e.fields.api_key || e.fields.minutes) || e.message); return false; })
+      return api("PUT", "/api/settings", payload).then(function (r) { st = r.steam; draw(); errEl.show(null); return true; })
+        .catch(function (e) { errEl.show(e.fields && e.fields.api_key || e.message); return false; })
         .then(function (ok) { busy.disabled = false; testBtn.disabled = removeBtn.disabled = !st.api_key_set; return ok; });
     }
-
-    // Queue panel auto-repost
-    var repostErr = fieldErr();
-    var repost = switchEl("Auto-repost queue panels", function (on) {
-      save({ panel: { autorepost: on } }, repost.cb, repostErr).then(function (ok) {
-        if (ok) toast(on ? "Queue panels move back to the bottom every " + pn.minutes + " min when chat buries them." : "Queue panels are no longer reposted on a timer.");
-        else repost.cb.checked = !on;
-      });
-    });
-    var minutes = h("input", { type: "number", min: "1", max: "1440", step: "1", class: "mono", style: "width:90px" });
-    function saveMinutes() {
-      var v = parseInt(minutes.value, 10);
-      if (v === pn.minutes) return;
-      save({ panel: { minutes: minutes.value } }, minutes, repostErr).then(function (ok) {
-        if (ok) toast("Queue panels are checked every " + pn.minutes + " min.");
-        else minutes.value = pn.minutes;
-      });
-    }
-    minutes.addEventListener("change", saveMinutes);
-    minutes.addEventListener("keydown", function (e) { if (e.key === "Enter") minutes.blur(); });
 
     // Require Linked Steam IDs
     var requireErr = fieldErr(), requireNote = h("div", { class: "f-null" });
@@ -999,8 +979,6 @@
     keyInput.addEventListener("keydown", function (e) { if (e.key === "Enter") saveKey(); });
 
     function draw() {
-      repost.cb.checked = !!pn.autorepost;
-      if (document.activeElement !== minutes) minutes.value = pn.minutes;
       require.cb.checked = !!st.require_link;
       requireNote.textContent = st.linked + " player" + (st.linked === 1 ? "" : "s") + " linked so far.";
       badge.className = "badge " + (st.api_key_set ? "ok" : "warn");
@@ -1020,9 +998,6 @@
     }
     return h("section", { class: "panel" },
       h("div", { class: "panel-head" }, h("h2", { text: "Bot settings" })),
-      toggleField("Auto-repost queue panels",
-        "Every few minutes, move each channel's queue panel back to the bottom if chat messages have pushed it up. Panels that are already the latest message are left alone. Applies to every channel with a queue panel.",
-        repost, [h("div", { class: "inline-num" }, h("span", { text: "Check every" }), minutes, h("span", { text: "minutes" })), repostErr]),
       toggleField("Require Linked Steam IDs",
         "Players must link a Steam account before they can join a queue. The first time they press Join or type !add, FragQ asks for their Steam ID. Changing it later with !steam or /steam needs a moderator's approval below. Moderators can still add unlinked players with Add Player.",
         require, [requireNote, requireErr]),
@@ -1035,10 +1010,16 @@
         h("div", { class: "f-body" }, keyInput, h("div", { class: "key-actions" }, saveBtn, testBtn, removeBtn), keyErr)));
   }
 
+  function proofBadge(r) {
+    if (r.verified_by === "steam") return h("span", { class: "badge ok", title: "Proved by signing in through Steam", text: "Steam proven" });
+    if (r.verified_by === "game") return h("span", { class: "badge blue", title: "Confirmed from a game server with !link", text: "In-game" });
+    return h("span", { class: "badge", title: "Typed in by the player, not proved", text: "Claimed" });
+  }
+
   function steamCell(r) {
     return h("span", { class: "who-cell" }, r.steam_avatar ? h("img", { src: r.steam_avatar, alt: "", class: "av-sm" }) : null,
       h("span", {}, h("span", { text: r.persona || "—" }), " ",
-        h("a", { class: "mono faint", href: r.profile_url, target: "_blank", rel: "noopener noreferrer", text: r.steam_id })));
+        h("a", { class: "mono faint", href: r.profile_url, target: "_blank", rel: "noopener noreferrer", text: r.steam_id }), " ", proofBadge(r)));
   }
 
   function steamLinksPanel() {
@@ -1212,7 +1193,7 @@
       var box = preview.querySelector(".restore-report");
       clear(box);
       var lines = [];
-      var NAMES = { panel_autorepost: "Auto-repost queue panels", panel_autorepost_minutes: "repost interval", require_steam_link: "Require Linked Steam IDs", steam_api_key: "Steam Web API key" };
+      var NAMES = { panel_autorepost: "Auto-repost queue panels (now per channel)", panel_autorepost_minutes: "repost interval", require_steam_link: "Require Linked Steam IDs", steam_api_key: "Steam Web API key" };
       if (rep.settings) lines.push(["Bot settings", (dry ? "Would restore: " : "Restored: ") + rep.settings.restored.map(function (n) { return NAMES[n] || n; }).join(", ")]);
       if (rep.channels) {
         var c = rep.channels;
@@ -1481,7 +1462,7 @@
   // ------------------------------------------------------------------ connectors page (game connectors, see bot/connectors.py)
   var DOCS = "https://d00msdaydevice.github.io/fragq/";
   var DENIED = { ip: "IP not allowed", expired: "key expired", disabled: "connector disabled", can_results: "results not allowed",
-    can_check: "player checks not allowed", can_link: "Steam linking not allowed" };
+    can_check: "player checks not allowed", can_link: "Steam linking not allowed", can_export: "reading linked accounts not allowed" };
 
   function renderConnectors() {
     S.editor = null;
@@ -1527,6 +1508,8 @@
       } }, icon("copy")));
   }
 
+  function exportOnly(c) { return c.can_export && !c.can_results && !c.can_check && !c.can_link; }
+
   function gameOf(d, id) { return d.games.find(function (g) { return g.id === id; }) || d.games[0]; }
 
   function queueLabel(d, id) {
@@ -1543,13 +1526,22 @@
         h("strong", { text: (fresh.rotated ? "New key for " : "Connector created: ") + (c ? c.name : "") }),
         h("p", { text: "Copy the key now. It is shown only once" + (fresh.rotated ? ", and the previous key no longer works." : ".") }),
         copyField(fresh.key, "Copy key"),
+        c && exportOnly(c) ? h("p", { class: "muted", text: "Enter it in Fragdex, under Settings › FragQ links." }) : null,
         h("p", { class: "muted", text: "Test it:" }),
         h("pre", { class: "example", text: 'curl -H "Authorization: Bearer ' + fresh.key + '" ' + d.api_url + "/status" }));
     }
 
-    var list = h("div", { class: "conn-list" });
-    d.connectors.forEach(function (c) { list.appendChild(connectorCard(d, base, c, reload)); });
-    if (!d.connectors.length) list.appendChild(h("div", { class: "vt-empty", text: "No connectors yet. Create one for each game server, or for each tool that sends results." }));
+    function cards(items, empty) {
+      var list = h("div", { class: "conn-list" });
+      items.forEach(function (c) { list.appendChild(connectorCard(d, base, c, reload)); });
+      if (!items.length) list.appendChild(h("div", { class: "vt-empty", text: empty }));
+      return list;
+    }
+    function count(items) {
+      return h("span", { class: "muted", style: "margin-left:auto;margin-right:12px;font-size:12.5px", text: items.length + " connector" + (items.length === 1 ? "" : "s") });
+    }
+    var fragdex = d.connectors.filter(exportOnly);
+    var others = d.connectors.filter(function (c) { return !exportOnly(c); });
 
     append(body, [
       h("section", { class: "panel" },
@@ -1566,22 +1558,31 @@
             h("a", { class: "btn btn-ghost", href: DOCS + "connectors/quake-live/", target: "_blank", rel: "noopener noreferrer" }, icon("book"), "Setup guide")))),
       newKey,
       h("section", { class: "panel" },
-        h("div", { class: "panel-head" }, h("h2", { text: "Connectors" }),
-          h("span", { class: "muted", style: "margin-left:auto;margin-right:12px;font-size:12.5px", text: d.connectors.length + " connector" + (d.connectors.length === 1 ? "" : "s") }),
-          h("button", { class: "btn btn-primary", type: "button", disabled: !d.queues.length, title: d.queues.length ? null : "Create a queue first",
+        h("div", { class: "panel-head" }, h("h2", { text: "Fragdex" }), count(fragdex),
+          h("button", { class: "btn btn-primary", type: "button",
+            onclick: function () { connectorModal(d, base, null, reload, true); } }, icon("plus"), "Create Fragdex connector")),
+        h("div", { class: "field" },
+          h("div", { class: "f-head" }, h("span", { class: "f-title", text: "FragQ address" })),
+          h("p", { class: "f-desc", text: "Lets Fragdex read which Discord account each member of this server linked to their Steam account, and whether they proved it. In Fragdex, open Settings › FragQ links and enter this address and the key of a connector created here." }),
+          h("div", { class: "f-body" }, copyField(d.public_url, "Copy address"))),
+        cards(fragdex, "No Fragdex connector yet. Create one to get its key.")),
+      h("section", { class: "panel" },
+        h("div", { class: "panel-head" }, h("h2", { text: "Additional Connectors" }), count(others),
+          h("button", { class: "btn btn-primary", type: "button",
             onclick: function () { connectorModal(d, base, null, reload); } }, icon("plus"), "Create connector")),
-        list),
+        cards(others, "No connectors yet. Create one for each game server, or for each tool that sends results.")),
     ]);
   }
 
   function connectorCard(d, base, c, reload) {
-    var g = gameOf(d, c.game);
+    var g = gameOf(d, c.game), fragdex = exportOnly(c);
     var st = { active: ["ok", "Active"], expired: ["danger", "Expired"], disabled: ["", "Disabled"] }[c.state];
     function act(path, done) {
       return api("POST", base + "/" + c.id + path).then(done).catch(function (e) { toast(e.message, "error"); });
     }
     var meta = [
-      ["Queues", c.queues.length ? c.queues.map(function (q) { return queueLabel(d, q); }).join(", ") : "None: the queues were deleted"],
+      ["Queues", c.queues.length ? c.queues.map(function (q) { return queueLabel(d, q); }).join(", ")
+        : c.can_results || c.can_check || c.can_link ? "None: the queues were deleted" : "None"],
       ["Results without a FragQ match", c.unmatched_queue ? "Posted in " + queueLabel(d, c.unmatched_queue) : "Not posted"],
       ["Allowed IPs", c.allowed_ips.length ? c.allowed_ips.join(", ") : "Any"],
       ["Rate limit", c.rate_limit ? c.rate_limit.toLocaleString() + "/min" : "Unlimited"],
@@ -1591,20 +1592,22 @@
       ["Results", c.results ? c.results.toLocaleString() + ", last " + fmtDate(c.last_result_at) : "None yet"],
       ["Created", fmtDate(c.created_at) + (c.created_by ? " by " + c.created_by : "")],
     ];
+    if (fragdex) meta = meta.filter(function (m) { return ["Queues", "Results without a FragQ match", "Results"].indexOf(m[0]) < 0; });
     if (c.last_denied_at) meta.push(["Last refused", fmtDate(c.last_denied_at) + " from " + c.last_denied_ip + ": " + (DENIED[c.last_denied_reason] || c.last_denied_reason), "denied"]);
     return h("article", { class: "conn-card" + (c.state !== "active" ? " is-off" : "") },
       h("div", { class: "conn-head" },
         h("div", { class: "conn-title" }, h("span", { class: "conn-game", text: g.emoji }),
           h("strong", { text: c.name }), h("code", { class: "faint", text: c.prefix + "…" }),
-          h("span", { class: "badge " + st[0], text: st[1] }), h("span", { class: "badge", text: g.label })),
+          h("span", { class: "badge " + st[0], text: st[1] }), fragdex ? null : h("span", { class: "badge", text: g.label })),
         h("div", { class: "pchips" },
           c.can_results ? h("span", { class: "pchip", text: "Match results" }) : null,
           c.can_check ? h("span", { class: "pchip", text: "Check linked players" }) : null,
-          c.can_link ? h("span", { class: "pchip", text: "Link Steam from game" }) : null)),
+          c.can_link ? h("span", { class: "pchip", text: "Link Steam from game" }) : null,
+          c.can_export ? h("span", { class: "pchip", text: "Read linked accounts" }) : null)),
       h("dl", { class: "conn-meta" }, meta.map(function (m) { return h("div", { class: m[2] || "" }, h("dt", { text: m[0] }), h("dd", { text: m[1] })); })),
       h("div", { class: "key-actions" },
         h("button", { class: "btn btn-sm", type: "button", onclick: function () { connectorModal(d, base, c, reload); } }, icon("edit"), "Edit"),
-        h("button", { class: "btn btn-sm", type: "button", disabled: !c.queues.length, onclick: function (e) {
+        fragdex ? null : h("button", { class: "btn btn-sm", type: "button", disabled: !c.queues.length, onclick: function (e) {
           var b = e.currentTarget; b.disabled = true;
           act("/test", function (r) { toast("Test result posted in #" + r.channel + "."); }).then(function () { b.disabled = false; });
         } }, icon("upload"), "Send test result"),
@@ -1613,23 +1616,30 @@
         } }, icon(c.disabled ? "play" : "pause"), c.disabled ? "Enable" : "Disable"),
         h("button", { class: "btn btn-sm", type: "button", onclick: function () {
           confirmModal({ title: "Replace key", ok: "Replace key", danger: true,
-            text: "Replace the key of '" + c.name + "' with a new one? Its settings stay, but the game server stops working until you give it the new key." })
+            text: "Replace the key of '" + c.name + "' with a new one? Its settings stay, but " + (fragdex ? "Fragdex" : "the game server") + " stops working until you give it the new key." })
             .then(function (ok) { if (ok) act("/rotate", function (r) { reload({ id: c.id, key: r.key, rotated: true }); }); });
         } }, icon("refresh"), "Replace key"),
         h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: function () {
           confirmModal({ title: "Delete connector", ok: "Delete", danger: true,
-            text: "Delete the connector '" + c.name + "'? Game servers using its key can no longer send results. Results already posted stay in Discord." })
+            text: "Delete the connector '" + c.name + "'? " + (fragdex ? "Fragdex can no longer read linked accounts with its key." : "Game servers using its key can no longer send results. Results already posted stay in Discord.") })
             .then(function (ok) {
               if (ok) api("DELETE", base + "/" + c.id).then(function () { toast("Connector deleted."); reload(); }).catch(function (e) { toast(e.message, "error"); });
             });
         } }, icon("trash"), "Delete")));
   }
 
-  function connectorModal(d, base, c, reload) {
+  function connectorModal(d, base, c, reload, fragdex) {
     var editing = !!c;
-    var m = modal({ title: editing ? "Edit connector" : "Create connector", wide: true });
+    fragdex = fragdex || (editing && exportOnly(c));
+    var m = modal({ title: (editing ? "Edit " : "Create ") + (fragdex ? "Fragdex connector" : "connector"), wide: true });
     var st = editing ? clone(c) : { name: "", game: "generic", queues: d.queues.length === 1 ? [d.queues[0].id] : [], unmatched_queue: "",
-      can_results: true, can_check: true, can_link: true, allowed_ips: [], rate_limit: d.default_rate, expires_at: "" };
+      can_results: true, can_check: true, can_link: true, can_export: false, allowed_ips: [], rate_limit: d.default_rate, expires_at: "" };
+    if (fragdex && !editing) {
+      st.name = "Fragdex";
+      st.queues = [];
+      st.can_results = st.can_check = st.can_link = false;
+      st.can_export = true;
+    }
     var name = h("input", { type: "text", maxlength: "60", value: st.name, placeholder: "CA server #1, CS2 retake server…" });
     var game = h("select", {}, d.games.map(function (g) { return h("option", { value: g.id, selected: g.id === st.game, text: g.emoji + "  " + g.label }); }));
     var gameNote = h("p", { class: "f-desc" });
@@ -1669,6 +1679,7 @@
       ["can_results", "Send match results", "Post end-of-match results and stats in the queue's channel."],
       ["can_check", "Check linked players", "Ask whether players have linked a Steam account, so the server can keep unlinked players in spectator."],
       ["can_link", "Link Steam accounts from the game", "Players can type !link on the game server. FragQ asks them to confirm in a Discord direct message."],
+      ["can_export", "Read linked accounts", "Read every Steam and Discord link of this server's members, for a tool such as Fragdex. Needs no queue. Don't give this to a game server."],
     ].map(function (p) {
       var cb = h("input", { type: "checkbox", checked: !!st[p[0]], onchange: function () { st[p[0]] = cb.checked; } });
       return h("label", { class: "perm-item" }, cb, h("span", {}, h("b", { text: p[1] }), h("small", { text: p[2] })));
@@ -1678,16 +1689,16 @@
       return h("div", { class: "form-row" }, h("label", { class: "lbl", text: label }), el, hint ? h("p", { class: "f-null", text: hint }) : null);
     }
     append(m.body, [
-      h("div", { class: "conn-form-grid" }, row("Name", name), row("Game", game)),
+      fragdex ? row("Name", name) : [h("div", { class: "conn-form-grid" }, row("Name", name), row("Game", game)),
       gameNote,
       row("Queues", d.queues.length ? qbox : h("span", { class: "muted", text: "No queues on this server yet." }),
-        "Results are matched to a FragQ match of these queues by the players' linked Steam accounts."),
+        "Results are matched to a FragQ match of these queues by the players' linked Steam accounts. A key that only reads linked accounts needs none."),
       row("Results without a FragQ match", unmatched, "When no recent match of these queues has most of the game's players, for example when players aren't linked."),
-      row("What the key can do", h("div", { class: "perm-grid one" }, perms)),
+      row("What the key can do", h("div", { class: "perm-grid one" }, perms))],
       h("div", { class: "conn-form-grid" },
         row("Rate limit (requests / minute)", rate, "0 = unlimited"),
         row("Expires", expires, "Works through this day (UTC). Empty = never.")),
-      row("Allowed IPs", ips, "IP addresses or ranges, one per line. Empty = any address. Use the game server's public address."),
+      row("Allowed IPs", ips, "IP addresses or ranges, one per line. Empty = any address. Use the " + (fragdex ? "address Fragdex connects from." : "game server's public address.")),
       err]);
     append(m.foot, [h("button", { class: "btn btn-ghost", type: "button", onclick: m.close }, "Cancel"), save]);
     drawUnmatched();
@@ -1697,7 +1708,7 @@
     function submit() {
       save.disabled = true;
       var payload = { name: name.value, game: game.value, queues: st.queues, unmatched_queue: st.unmatched_queue,
-        can_results: st.can_results, can_check: st.can_check, can_link: st.can_link,
+        can_results: st.can_results, can_check: st.can_check, can_link: st.can_link, can_export: st.can_export,
         rate_limit: rate.value, expires_at: expires.value, allowed_ips: ips.value };
       (editing ? api("PUT", base + "/" + c.id, payload) : api("POST", base, payload)).then(function (r) {
         m.close();
@@ -1924,6 +1935,10 @@
     return n;
   };
 
+  // Settings shown as a switch at the right end of their section's tab bar instead of as a field.
+  // On: the value is the number typed next to it (start says what switching it on fills in). Off: not set.
+  var BAR_VARS = { panel_autorefresh: { label: "Auto-refresh panel", before: "every", after: "min", start: "5", min: 1, max: 1440 } };
+
   Editor.prototype.mount = function (el) {
     this.el = el;
     var secs = this.schema.sections;
@@ -1948,29 +1963,52 @@
         } }, sec, err ? h("span", { class: "bubble err" }) : dirty ? h("span", { class: "bubble dirty" }) : null));
     });
     this.chips = chips;
+    var barErrs = [];
+    this.schema.variables.forEach(function (v) {
+      if (!BAR_VARS[v.name] || v.section !== self.section) return;
+      chips.appendChild(self.barToggle(v));
+      if (self.errors[v.name]) barErrs.push(h("div", { class: "f-err bar-err" }, icon("alert"), self.errors[v.name]));
+    });
     var panel = h("section", { class: "panel" });
     this.schema.variables.forEach(function (v) {
-      if (v.section === self.section) panel.appendChild(self.renderField(v));
+      if (v.section === self.section && !BAR_VARS[v.name]) panel.appendChild(self.renderField(v));
     });
     this.bar = h("div");
     if (this.readOnly) {  // a disabled fieldset turns off every control inside it
       var ro = h("fieldset", { class: "ro-fields", disabled: true }, panel);
-      append(el, [chips, h("div", { class: "flash flash-warn ro-note" }, icon("info"),
+      append(el, [chips, barErrs, h("div", { class: "flash flash-warn ro-note" }, icon("info"),
         h("span", { text: "Read-only: you can view these settings, but you don't have permission to change them." })), ro]);
       return;
     }
-    append(el, [chips, panel, this.bar]);
+    append(el, [chips, barErrs, panel, this.bar]);
     this.updateBar();
   };
 
+  Editor.prototype.barToggle = function (v) {
+    var self = this, name = v.name, b = BAR_VARS[name], on = !!this.open[name];
+    var cb = h("input", { type: "checkbox", checked: on, disabled: this.readOnly, "aria-label": v.display,
+      onchange: function () {
+        self.open[name] = cb.checked;
+        if (cb.checked && !self.draft[name]) self.draft[name] = b.start;
+        self.refreshField(name);
+      } });
+    var num = on ? h("input", { type: "number", class: "mono", min: String(b.min), max: String(b.max), step: "1", disabled: this.readOnly,
+      value: this.draft[name] === null || this.draft[name] === undefined ? "" : this.draft[name], "aria-label": v.display + " (" + b.after + ")",
+      oninput: function (e) { self.set(name, e.target.value.trim()); } }) : null;
+    return h("div", { class: "bar-toggle" + (this.isDirty(name) ? " dirty" : "") + (this.errors[name] ? " err" : ""), "data-name": name, title: v.description },
+      h("span", { class: "bt-label", text: b.label }),
+      on ? [h("span", { text: b.before }), num, h("span", { text: b.after })] : null,
+      h("label", { class: "switch", title: on ? "On" : "Off" }, cb, h("span")));
+  };
+
   Editor.prototype.refreshField = function (name) {
-    var old = this.el.querySelector('.field[data-name="' + name + '"]');
-    if (old) old.replaceWith(this.renderField(this.vars[name]));
+    var old = this.el.querySelector('[data-name="' + name + '"]');
+    if (old) old.replaceWith(BAR_VARS[name] ? this.barToggle(this.vars[name]) : this.renderField(this.vars[name]));
     this.updateBar();
   };
 
   Editor.prototype.changed = function (name) {
-    var f = this.el.querySelector('.field[data-name="' + name + '"]');
+    var f = this.el.querySelector('[data-name="' + name + '"]');
     if (f) f.classList.toggle("dirty", this.isDirty(name));
     this.updateBar();
   };

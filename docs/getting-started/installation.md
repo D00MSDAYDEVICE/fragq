@@ -83,7 +83,7 @@ Every setting is documented in `.env.example` and in the [.env reference](../adm
 
 ```bash
 docker compose ps            # db, app and caddy should be running (db "healthy")
-docker compose logs -f app   # the bot: "FragQ v1.0.0 starting.", then the Discord connection
+docker compose logs -f app   # the bot: "FragQ v1.1.0 starting.", then the Discord connection
 ```
 
 Open `PUBLIC_URL` in a browser. With a self-signed certificate your browser warns once; that is

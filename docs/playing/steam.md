@@ -37,6 +37,18 @@ FragQ plugin, you can also type this in the game chat:
 FragQ sends you a Discord direct message: press **Confirm** to link the Steam account you are playing
 on. See [`!link`](../connectors/quake-live.md#link).
 
+## Prove it's yours
+
+Linking with `!steam` only says which account you claim. To prove it, open the `/verify` page of your
+FragQ web panel (FragQ's replies link to it, or press **Verify with Steam**):
+
+1. Sign in with Discord.
+2. Press **Sign in through Steam** and sign in on Steam's own page. FragQ never sees your password.
+
+FragQ then marks your link as proved. If someone else had linked your account without proving it, the
+account becomes yours and they are told. If you are linked to a different account, a moderator approves
+the change as usual. If someone else has already proved the account, ask a server admin.
+
 ## Change your account
 
 Run `!steam` again with another ID. Your first link is immediate, but a **change** needs a moderator's

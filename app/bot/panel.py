@@ -9,6 +9,10 @@ stops Join / !add / ++ for the channel until it is pressed again.
 Players' profile pictures are shown as a row of avatars (bot.avatars) at the bottom of the embed,
 right above the buttons.
 
+A player joining a queue posts the panel if the channel has none, or moves it below the newest messages
+(like Move panel down). With the channel's panel_autorefresh set, a panel buried by chat is also moved
+back down every that many minutes.
+
 The panel's message id is kept in the channel's cfg_info, so it survives restarts. Presses are routed by
 custom_id ("fragq:add:<queue_id>", "fragq:remove", "fragq:pause", "fragq:mod_add", the selects
 "fragq:mod_queue" / "fragq:mod_users:<queue_id>", "fragq:steam_prompt:<queues>" and the Steam ID form
@@ -35,8 +39,10 @@ PREFIX = "fragq:"
 MAX_QUEUES = 20          # 4 rows of 5 join buttons, the 5th row holds Leave and the moderator buttons
 PAUSED_COLOUR = 0xf5a524
 EDIT_INTERVAL = 2.0      # seconds between edits of one panel (Discord rate limits message edits)
+ADD_DELAY = 1.5          # after a player joins, wait for the command reply before moving the panel down
 
-_state = {}  # qc.id -> dict(sig=..., edited=float, repost=bool)
+_state = {}  # qc.id -> dict(sig=..., edited=float, repost=bool, added=float)
+_migrated = False
 
 
 def _bar(n, size, width=12):
@@ -181,6 +187,11 @@ def bump(qc):
 		_state.setdefault(qc.id, dict(sig=None, edited=0))["repost"] = True
 
 
+def added(qc):
+	""" A player joined a queue: post the panel, or move it to the bottom, shortly (see think). """
+	_state.setdefault(qc.id, dict(sig=None, edited=0, repost=False))["added"] = time.time()
+
+
 async def remove(qc, forget=True):
 	""" Delete the panel message. """
 	mid = message_id(qc)
@@ -243,16 +254,47 @@ def _buried(qc, mid):
 	return bool(last and last > mid)
 
 
-async def think(frame_time):
-	autorepost = bot.settings.get("panel_autorepost")
-	interval = max(1, int(bot.settings.get("panel_autorepost_minutes") or 5)) * 60
+async def _migrate():
+	""" FragQ 1.0.0 had one bot-wide auto-repost switch on the Settings page; it is per channel now. """
+	global _migrated
+	_migrated = True
+	if not bot.settings.get("panel_autorepost"):
+		return
+	minutes = min(1440, max(1, int(bot.settings.get("panel_autorepost_minutes") or 5)))
+	await bot.settings.put("panel_autorepost", False)
 	for qc in list(bot.queue_channels.values()):
+		if qc.cfg.panel_autorefresh is None:
+			await qc.cfg.update(dict(panel_autorefresh=str(minutes)))
+	log.info(f"Queue panel auto-repost is now a channel setting: set every channel to {minutes} min.")
+
+
+async def _post_new(qc):
+	try:
+		await post(qc)
+	except Exception as e:
+		log.error(f"Failed to post queue panel in {qc.id}: {e}")
+
+
+async def think(frame_time):
+	if not bot.bot_ready:
+		return
+	if not _migrated or bot.settings.get("panel_autorepost"):  # also after restoring an old backup
+		await _migrate()
+	for qc in list(bot.queue_channels.values()):
+		st = _state.get(qc.id)
+		if st and st.get("added") and frame_time - st["added"] >= ADD_DELAY:
+			st["added"] = None
+			if not message_id(qc):
+				await _post_new(qc)
+				continue
+			if _buried(qc, message_id(qc)):
+				st["repost"] = True
 		if not (mid := message_id(qc)):
 			continue
-		if autorepost:  # Settings page: move panels buried by chat back to the bottom every few minutes
+		if minutes := qc.cfg.panel_autorefresh:  # move a panel buried by chat back to the bottom
 			st = _state.setdefault(qc.id, dict(sig=None, edited=0, repost=False))
 			st.setdefault("posted", frame_time)
-			if frame_time - st["posted"] >= interval:
+			if frame_time - st["posted"] >= minutes * 60:
 				st["posted"] = frame_time
 				if _buried(qc, mid):
 					st["repost"] = True
