@@ -547,7 +547,7 @@
       body.appendChild(grp);
     });
     if (can("manage_channels")) {
-      body.appendChild(h("div", { class: "t-row add-ch", role: "button", tabindex: "0", onclick: addChannelModal,
+      body.appendChild(h("div", { class: "t-row add-ch", role: "button", tabindex: "0", onclick: function () { addChannelModal(); },
         onkeydown: function (e) { if (e.key === "Enter") addChannelModal(); } }, icon("plus"), h("span", { text: "Add channel" })));
     }
     tree.appendChild(body);
@@ -561,6 +561,7 @@
 
   function channelMenu(anchor, c) {
     var items = [
+      can("manage_channels") ? { icon: "copy", label: "Duplicate", action: function () { addChannelModal(c); } } : null,
       can("panel", c) ? { icon: "panel", label: c.panel ? "Move queue panel down" : "Post queue panel", action: function () { panelAction(c, true); } } : null,
       can("panel", c) && c.panel ? { icon: "x", label: "Remove queue panel", action: function () { panelAction(c, false); } } : null,
       can("pause", c) ? { icon: c.paused ? "play" : "pause", label: c.paused ? "Resume queue" : "Pause queue", action: function () { pauseAction(c, !c.paused); } } : null,
@@ -577,6 +578,7 @@
   function queueMenu(anchor, c, q) {
     var danger = can("manage_queues", c);
     menu(anchor, [
+      danger ? { icon: "copy", label: "Duplicate", action: function () { duplicateQueue(c, q); } } : null,
       { icon: "swap", label: can("edit_queue", c) ? "Import / export config" : "Export config", action: function () { cfgModal("queue", c, q); } },
       can("clear_queues", c) ? { icon: "eraser", label: "Remove all players", action: function () { clearQueue(c, q); } } : null,
       danger ? "-" : null,
@@ -627,6 +629,19 @@
       }).catch(function (e) { toast(e.message, "error"); });
   }
 
+  // Settings the server couldn't copy (a role or channel that no longer exists, ...), shown after a duplicate.
+  function copyNotes(notes) {
+    if (notes && notes.length) toast(notes.length + " setting(s) weren't copied. " + notes.join(" · "), "error");
+  }
+
+  function duplicateQueue(c, q) {
+    api("POST", "/api/channels/" + c.id + "/queues/" + q.id + "/duplicate").then(function (n) {
+      toast("Queue " + q.name + " duplicated as " + n.name + ".");
+      copyNotes(n.notes);
+      return reloadGuild().then(function () { go({ gid: S.route.gid, cid: c.id, qid: n.id }); });
+    }).catch(function (e) { toast(e.message, "error"); });
+  }
+
   function clearQueue(c, q) {
     confirmModal({ title: "Remove all players", text: "Remove everybody currently added to " + q.name + "?", ok: "Remove players" })
       .then(function (ok) {
@@ -665,9 +680,10 @@
     }
   }
 
-  function addChannelModal() {
+  // Without `src`: enable the bot on a channel. With `src`: the same, with a copy of src's settings and queues.
+  function addChannelModal(src) {
     var g = S.guild;
-    var m = modal({ title: "Add channel" });
+    var m = modal({ title: src ? "Duplicate #" + src.name : "Add channel" });
     var chosen = null;
     var free = g.text_channels.filter(function (c) { return !c.enabled; });
     var warn = h("div", { class: "flash flash-warn hidden", text: "The bot can't send messages in this channel. Check its permissions." });
@@ -682,18 +698,21 @@
     });
     var err = h("div", { class: "f-err hidden" });
     append(m.body, [
-      h("p", { text: "Enable FragQ on a text channel. Same as typing !enable_pubobot there." }),
+      src ? h("p", {}, "Enable FragQ on another text channel with the settings of ", h("strong", { text: "#" + src.name }),
+        " and a copy of its " + src.queues.length + " queue(s). Players, ratings, match history and the queue panel aren't copied.")
+        : h("p", { text: "Enable FragQ on a text channel. Same as typing !enable_pubobot there." }),
       free.length ? [h("label", { class: "lbl", text: "Text channel" }), pk, h("div", { style: "margin-top:12px" }, warn)]
         : h("div", { class: "flash flash-warn", text: "Every text channel the bot can see is already enabled." }),
       err]);
     var ok = h("button", { class: "btn btn-primary", type: "button", disabled: true, onclick: function () {
       ok.disabled = true;
-      api("POST", "/api/guilds/" + g.id + "/channels", { channel_id: chosen }).then(function (c) {
+      api("POST", src ? "/api/channels/" + src.id + "/duplicate" : "/api/guilds/" + g.id + "/channels", { channel_id: chosen }).then(function (c) {
         m.close();
-        toast("Bot enabled on #" + c.name + ".");
+        toast(src ? "#" + src.name + " duplicated to #" + c.name + "." : "Bot enabled on #" + c.name + ".");
+        copyNotes(c.notes);
         return reloadGuild().then(function () { go({ gid: g.id, cid: c.id }); });
       }).catch(function (e) { err.classList.remove("hidden"); clear(err); append(err, [icon("alert"), e.message]); ok.disabled = false; });
-    } }, icon("plus"), "Enable");
+    } }, icon(src ? "copy" : "plus"), src ? "Duplicate" : "Enable");
     append(m.foot, [h("button", { class: "btn btn-ghost", type: "button", onclick: m.close }, "Cancel"), ok]);
   }
 
@@ -849,14 +868,14 @@
         h("div", {}, h("h1", { text: g.name }), h("p", { text: g.admin ? "You are an administrator of this server." : "You have limited access: only the channels and actions you were given are shown." }))),
       h("div", { class: "head-actions" },
         g.manage_users ? h("button", { class: "btn", type: "button", onclick: function () { go({ page: "users", ugid: g.id }); } }, icon("users"), "Users") : null,
-        can("manage_channels") ? h("button", { class: "btn btn-primary", type: "button", onclick: addChannelModal }, icon("plus"), "Add channel") : null)));
+        can("manage_channels") ? h("button", { class: "btn btn-primary", type: "button", onclick: function () { addChannelModal(); } }, icon("plus"), "Add channel") : null)));
     var body = h("div");
     root.appendChild(body);
     if (!g.channels.length) {
       append(body, h("div", { class: "panel" }, h("div", { class: "empty-state" }, icon("hash"),
         h("h3", { text: "No queue channels yet" }),
         h("p", { text: "Enable the bot on a text channel to create pickup queues there." }),
-        can("manage_channels") ? h("button", { class: "btn btn-primary", type: "button", onclick: addChannelModal }, icon("plus"), "Add channel") : null)));
+        can("manage_channels") ? h("button", { class: "btn btn-primary", type: "button", onclick: function () { addChannelModal(); } }, icon("plus"), "Add channel") : null)));
       return;
     }
     function load() {

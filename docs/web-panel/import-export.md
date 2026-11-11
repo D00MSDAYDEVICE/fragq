@@ -4,6 +4,9 @@ Channel and queue settings can be copied as JSON `.cfg` files: to back them up, 
 like an existing one, or to move a configuration to another server. The format is the same as the
 original PUBobot2 web interface used, so configs exported from PUBobot2 import into FragQ.
 
+To copy a channel or queue on the same server, **Duplicate** in its **⋯** menu does it in one step (see
+[the web panel overview](overview.md#queue-page)).
+
 ![Import / export](../assets/screenshots/import-export.png){ .shot loading=lazy width=760 }
 
 ## Export

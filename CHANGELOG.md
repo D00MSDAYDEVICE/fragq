@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Duplicate channels and queues:** **Duplicate** at the top of a channel's or queue's **⋯** menu. A queue
+  is copied on the same channel as `name(Copy)`. A channel asks for another text channel, like **Add
+  channel**, and gets the same settings and a copy of every queue.
+
 ## 1.1.0 (2026-11-08)
 
 - **Queue panel follows the players:** when someone joins a queue, FragQ posts the queue panel if the

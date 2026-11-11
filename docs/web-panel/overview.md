@@ -43,15 +43,18 @@ And four tabs:
 - **Leaderboard** and **Matches**: ratings and match history, see
   [Live, leaderboard and matches](live-and-stats.md).
 
-The channel's **⋯** menu in the tree also has **Export players (CSV)**, **Export matches (CSV)** and
-**Disable bot on channel**. Disabling deletes the channel's configuration and queues; ratings and match
+The channel's **⋯** menu in the tree also has **Duplicate**, **Export players (CSV)**, **Export matches (CSV)** and
+**Disable bot on channel**. **Duplicate** asks for another text channel, like **Add channel**, and enables
+the bot there with the same settings and a copy of every queue. Players, ratings, match history and the
+queue panel aren't copied. Disabling deletes the channel's configuration and queues; ratings and match
 history stay in the database, so enabling the channel again later brings them back.
 
 ## Queue page
 
 Select a queue in the tree to edit its [settings](../reference/queue-settings.md). Its **⋯** menu has
-**Import / export config**, **Remove all players** and **Delete queue**. Deleting a queue keeps its
-match history.
+**Duplicate**, **Import / export config**, **Remove all players** and **Delete queue**. **Duplicate** adds a
+queue with the same settings on the same channel, named like `4v4(Copy)` (queue names can't contain spaces);
+rename it in its settings. Deleting a queue keeps its match history.
 
 ## Bot status
 

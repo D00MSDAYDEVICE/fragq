@@ -536,22 +536,28 @@ async def api_guild_overview(request):
 	))
 
 
-async def api_add_channel(request):
-	guild, acc = get_guild(request)
-	need(acc, "manage_channels")
+async def _enable_channel(request, guild):
+	""" Enable the bot on the text channel named in the body. Returns the new QueueChannel; raises a JSON error. """
 	body = await read_json(request)
 	try:
 		channel = guild.get_channel(int(body.get("channel_id")))
 	except (TypeError, ValueError):
 		channel = None
 	if channel is None or channel.type != ChannelType.text:
-		return jerror(400, "Text channel not found.")
+		raise _http(web.HTTPBadRequest, "Text channel not found.")
 	if channel.id in bot.queue_channels:
-		return jerror(409, "The bot is already enabled on this channel.")
+		raise _http(web.HTTPConflict, "The bot is already enabled on this channel.")
 	qc = await bot.QueueChannel.create(channel)
 	bot.queue_channels[channel.id] = qc
 	await qc.update_info(channel)
-	log.info(f"WEBUI| {request['user']['name']} enabled the bot on {guild.name}>#{channel.name}.")
+	return qc
+
+
+async def api_add_channel(request):
+	guild, acc = get_guild(request)
+	need(acc, "manage_channels")
+	qc = await _enable_channel(request, guild)
+	log.info(f"WEBUI| {request['user']['name']} enabled the bot on {guild.name}>#{guild.get_channel(qc.id).name}.")
 	return web.json_response(channel_dict(qc, guild, acc), status=201)
 
 
@@ -922,6 +928,31 @@ async def api_channel_export(request):
 	return web.json_response(schema.export_values(qc.cfg))
 
 
+async def api_channel_duplicate(request):
+	""" Enable the bot on another channel with this channel's settings and a copy of each of its queues. """
+	src, guild, acc = get_qc(request)
+	need(acc, "manage_channels")
+	inputs, skipped = await backup._check(bot.QueueChannel.cfg_factory, schema.ui_values(src.cfg), guild)
+	qc = await _enable_channel(request, guild)
+	if inputs:
+		await qc.cfg.update(inputs)
+	notes = [f"Setting '{k}' not copied: {v}" for k, v in skipped.items()]
+	for q in list(src.queues):
+		if q.name.lower() in (x.name.lower() for x in qc.queues):
+			notes.append(f"Queue {q.name} not copied: the channel already has a queue with that name.")
+			continue
+		try:
+			new, qskipped = await _clone_queue(q, qc, guild, q.name)
+		except Exception as e:
+			notes.append(f"Queue {q.name} not copied: {schema.error_text(e)}")
+			continue
+		notes += [f"{new.name}: setting '{k}' not copied: {v}" for k, v in qskipped.items()]
+	await bot.panel.refresh(qc, force=True)
+	src_name, dst_name = guild.get_channel(src.id), guild.get_channel(qc.id)
+	log.info(f"WEBUI| {request['user']['name']} duplicated {guild.name}>#{src_name or src.id} to #{dst_name or qc.id}.")
+	return web.json_response(dict(channel_dict(qc, guild, acc), notes=notes), status=201)
+
+
 async def api_channel_delete(request):
 	qc, guild, acc = get_qc(request)
 	need(acc, "manage_channels")
@@ -964,6 +995,40 @@ async def api_create_queue(request):
 	qc.queues.append(q)
 	log.info(f"WEBUI| {request['user']['name']} created queue {name} on {guild.name}.")
 	return web.json_response(queue_dict(q), status=201)
+
+
+def copy_name(name, taken):
+	""" 4v4(Copy), then 4v4(Copy2), ...: queue names are one word, so there is no space. """
+	n = 1
+	while (new := f"{name}(Copy{n if n > 1 else ''})").lower() in taken:
+		n += 1
+	return new
+
+
+async def _clone_queue(q, qc, guild, name):
+	""" A new queue on `qc` with the settings of `q`. Returns (queue, {setting: why it wasn't copied}). """
+	inputs, skipped = await backup._check(bot.PickupQueue.cfg_factory, dict(schema.ui_values(q.cfg), name=name), guild)
+	cfg_obj = await bot.PickupQueue.cfg_factory.spawn(guild, f_key=qc.id)
+	try:
+		await cfg_obj.update(dict(inputs, name=name))
+	except Exception:
+		await cfg_obj.delete()
+		raise
+	new = bot.PickupQueue(qc, cfg_obj)
+	qc.queues.append(new)
+	return new, skipped
+
+
+async def api_queue_duplicate(request):
+	q, qc, guild, acc = get_queue(request, "manage_queues")
+	name = copy_name(q.name, {x.name.lower() for x in qc.queues})
+	try:
+		new, skipped = await _clone_queue(q, qc, guild, name)
+	except Exception as e:
+		return jerror(400, schema.error_text(e))
+	await bot.panel.refresh(qc, force=True)
+	log.info(f"WEBUI| {request['user']['name']} duplicated queue {q.name} as {name} on {guild.name}.")
+	return web.json_response(dict(queue_dict(new), notes=[f"Setting '{k}' not copied: {v}" for k, v in skipped.items()]), status=201)
 
 
 async def api_panel_post(request):
@@ -1217,6 +1282,7 @@ def make_app():
 	r.add_delete("/api/channels/{channel_id}", api_channel_delete)
 	r.add_post("/api/channels/{channel_id}/reset/{var}", api_channel_reset)
 	r.add_get("/api/channels/{channel_id}/export", api_channel_export)
+	r.add_post("/api/channels/{channel_id}/duplicate", api_channel_duplicate)
 	r.add_post("/api/channels/{channel_id}/queues", api_create_queue)
 	r.add_get("/api/channels/{channel_id}/live", api_channel_live)
 	r.add_post("/api/channels/{channel_id}/panel", api_panel_post)
@@ -1232,6 +1298,7 @@ def make_app():
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/reset/{var}", api_queue_reset)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/clear", api_queue_clear)
 	r.add_get("/api/channels/{channel_id}/queues/{queue_id}/export", api_queue_export)
+	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/duplicate", api_queue_duplicate)
 
 	r.add_get("/connectors", index)
 	r.add_get("/connectors/{tail:.*}", index)
