@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-11)
 
 - **Duplicate channels and queues:** **Duplicate** at the top of a channel's or queue's **⋯** menu. A queue
   is copied on the same channel as `name(Copy)`. A channel asks for another text channel, like **Add
