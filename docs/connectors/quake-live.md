@@ -16,8 +16,9 @@ It is one file, `fragq.py`, that works on both **minqlx** and **minqlxtended**.
 2. Press **Download fragq.py** on the Connectors page (or take `app/plugins/minqlx/fragq.py` from the
    [repository](https://github.com/D00MSDAYDEVICE/fragq)) and put it in the server's `minqlx-plugins`
    folder.
-3. Add `fragq` to `qlx_plugins` in `server.cfg`, and on **minqlx** turn on the stats feed, which the
-   plugin reads match stats from:
+3. Add `fragq` to `qlx_plugins` in `server.cfg`, and turn on the stats feed, which the plugin reads match
+   stats from. Both **minqlx** and **minqlxtended** need it for match results; voice moves, `!link` and
+   link enforcement work without it:
 
     ```text
     set qlx_plugins "..., fragq"
@@ -50,8 +51,8 @@ It is one file, `fragq.py`, that works on both **minqlx** and **minqlxtended**.
 ## Voice moves
 
 With `qlx_fragqVoice 1`, the plugin sends FragQ the teams when a match starts and a few seconds after team
-changes, and sends the players back to the lobby when the match ends. FragQ then moves them between the
-queue's Discord voice channels. It needs:
+changes, and sends the players back to the lobby when the match ends or is aborted (`!abort` or an abort
+vote). FragQ then moves them between the queue's Discord voice channels. It needs:
 
 - [voice moves](../administration/voice.md) turned on for the queue, with its three voice channels set;
 - the **Move players in voice** permission on the connector;
@@ -60,6 +61,24 @@ queue's Discord voice channels. It needs:
 The red team goes to the team channel with *red* in its name and blue to the one with *blue*; with other
 channel names, see [how FragQ decides](../administration/voice.md#game-servers). Only team modes (CA, TDM,
 CTF and so on) send teams. `!fragq` shows the result of the last request.
+
+### Moving players by hand
+
+For teams arranged in the game rather than picked in Discord, admins can tell FragQ to move players with
+`!voice`. It works in warmup too, and whether `qlx_fragqVoice` is on or off; the key still needs **Move players
+in voice**.
+
+| Command | What FragQ does |
+|---|---|
+| `!voice teams` | Moves everyone on red and blue to their team's voice channel now |
+| `!voice lobby` | Moves everyone in a team channel back to the lobby |
+| `!voice <player id> red` / `blue` / `lobby` | Moves one player (player ids are shown by `/players`) |
+
+Add a queue name at the end, such as `!voice teams CA`, when the key has several queues with voice moves on.
+The same rules apply as for automatic moves: only players already in the queue's lobby or team channels are
+moved. The reply says how many moved and why the others didn't, such as *3 of 4 moved: 1 not linked*. There
+are 5 seconds between `!voice` commands. Who may use it is set with `qlx_voicemoveperm` (permission level 4 by
+default).
 
 ## Match results
 
@@ -154,6 +173,7 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!link <player id> <discord id>` | `qlx_fragqAdminLevel` | Link another player's account |
 | `!linkenforce [on\|off]` | `qlx_fragqAdminLevel` | Require linked Steam accounts to play |
 | `!setdiscord <invite URL>` | `qlx_fragqAdminLevel` | The Discord invite shown to players; `off` removes it |
+| `!voice teams` / `lobby` / `<player id> red\|blue\|lobby` | `qlx_voicemoveperm` | [Move players in voice](#moving-players-by-hand) now |
 | `!fragq` | `qlx_fragqAdminLevel` | Status: address, key, last result sent |
 | `!fragq url <address>` | 5 | Set the FragQ address |
 | `!fragq key <key>` | 5, console / rcon only | Set the connector key |
@@ -174,6 +194,7 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `qlx_fragqDiscordInvite` | | Start value for `!setdiscord` before it is first used |
 | `qlx_fragqVerifyTls` | `1` | `0` = accept a self-signed certificate |
 | `qlx_fragqVoice` | `0` | `1` = move players between the queue's Discord voice channels ([voice moves](#voice-moves)) |
+| `qlx_voicemoveperm` | `4` | Permission level for [`!voice`](#moving-players-by-hand) |
 
 ## Troubleshooting
 
@@ -182,5 +203,5 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!fragq test`: *HTTP 401: Invalid connector key* | The key is wrong or was replaced. Set it again with `!fragq key`. |
 | *HTTP 403: … can't be used from …* | The server's address isn't in the connector's **Allowed IPs**. The message shows the address FragQ saw. |
 | *certificate verify failed* | Set `qlx_fragqVerifyTls 0` for a self-signed certificate. |
-| Results are never sent (minqlx) | `zmq_stats_enable 1` is missing. Check `!fragq` for the last result's status. |
+| Results are never sent | `zmq_stats_enable 1` is missing (needed on minqlx and minqlxtended). Check `!fragq` for the last result's status. |
 | Results post without a match number | Fewer than half the match's players have linked Steam accounts, or the match is older than 6 hours, or the queue isn't one of the connector's queues. |

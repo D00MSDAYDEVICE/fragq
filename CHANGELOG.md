@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1 (2026-11-19)
+
+- **Quake Live plugin 1.2.0: `!voice`.** Admins move players by hand, for teams arranged in the game:
+  `!voice teams`, `!voice lobby` or `!voice <player id> red|blue|lobby`, with an optional queue name. Works in
+  warmup and with `qlx_fragqVoice 0`. The new cvar `qlx_voicemoveperm` sets who may use it (level 4 by default).
+- **Aborted matches go back to the lobby:** `!abort` and abort votes restart the map without ending the match, so
+  the plugin now also sends everyone to the lobby when that happens after a live match (`qlx_fragqVoice 1`).
+- **One Flag CTF and Overload send teams:** the plugin's list of team modes had wrong names for One Flag CTF
+  and was missing Overload, so voice moves never ran in those modes.
+- **Docs:** match results need `zmq_stats_enable 1` on minqlxtended too, not only on minqlx.
+
 ## 1.3.0 (2026-11-19)
 
 - **Voice moves (off by default):** each queue can name a Lobby and two team voice channels. When a match

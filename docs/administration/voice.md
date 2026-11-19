@@ -46,7 +46,9 @@ A [connector](../connectors/index.md) with the **Move players in voice** permiss
 substitutes and team changes during a match. It works for any game: the game server sends its teams with the
 players' Steam IDs, and FragQ moves their linked Discord accounts, following the same rules as above. The
 request is described in the [result format](../connectors/result-format.md#voice-moves). The
-[Quake Live plugin](../connectors/quake-live.md#voice-moves) does it with `qlx_fragqVoice 1`.
+[Quake Live plugin](../connectors/quake-live.md#voice-moves) does it with `qlx_fragqVoice 1`, and admins on the
+game server can [move players by hand](../connectors/quake-live.md#moving-players-by-hand) with `!voice`, for
+teams arranged in the game.
 
 Games name their teams their own way. FragQ decides which game team goes to which channel like this:
 
