@@ -47,6 +47,20 @@ It is one file, `fragq.py`, that works on both **minqlx** and **minqlxtended**.
     If FragQ runs on a LAN address with its own certificate (such as `https://192.168.1.50:8443`),
     set `qlx_fragqVerifyTls 0`.
 
+## Voice moves
+
+With `qlx_fragqVoice 1`, the plugin sends FragQ the teams when a match starts and a few seconds after team
+changes, and sends the players back to the lobby when the match ends. FragQ then moves them between the
+queue's Discord voice channels. It needs:
+
+- [voice moves](../administration/voice.md) turned on for the queue, with its three voice channels set;
+- the **Move players in voice** permission on the connector;
+- players' Steam accounts linked to Discord.
+
+The red team goes to the team channel with *red* in its name and blue to the one with *blue*; with other
+channel names, see [how FragQ decides](../administration/voice.md#game-servers). Only team modes (CA, TDM,
+CTF and so on) send teams. `!fragq` shows the result of the last request.
+
 ## Match results
 
 When a match ends, the plugin waits a few seconds for the final stats of every player, then sends
@@ -159,6 +173,7 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `qlx_fragqAdminLevel` | `3` | Permission level for `!linkenforce`, `!setdiscord`, `!fragq` and linking others |
 | `qlx_fragqDiscordInvite` | | Start value for `!setdiscord` before it is first used |
 | `qlx_fragqVerifyTls` | `1` | `0` = accept a self-signed certificate |
+| `qlx_fragqVoice` | `0` | `1` = move players between the queue's Discord voice channels ([voice moves](#voice-moves)) |
 
 ## Troubleshooting
 

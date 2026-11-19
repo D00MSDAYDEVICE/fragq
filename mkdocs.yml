@@ -105,6 +105,7 @@ nav:
       - Web Panel Access: administration/access.md
       - Settings Page: administration/settings-page.md
       - Steam Integration: administration/steam.md
+      - Voice Moves: administration/voice.md
       - .env Reference: administration/env.md
       - HTTPS And Ports: administration/https.md
       - Moving From PUBobot2: administration/pubobot2.md

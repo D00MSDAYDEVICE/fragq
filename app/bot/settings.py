@@ -24,9 +24,13 @@ DEFAULTS = dict(
 	panel_autorepost_minutes=5,
 	steam_api_key="",
 	require_steam_link=False,
+	fragdex_url="",          # Fragdex lookups (bot.fragdex): the address, a Fragdex API key,
+	fragdex_key="",
+	fragdex_ok={},           # which address and key passed the last test,
+	fragdex_lookup=False,    # and the switch, off until the owner turns it on
 )
 # Restored by the Settings page backup; the API key only when the backup includes it.
-BACKUP = ("require_steam_link",)
+BACKUP = ("require_steam_link", "fragdex_url")
 # Still read from FragQ 1.0.0 backups: turned into each channel's panel_autorefresh after the restore.
 LEGACY = ("panel_autorepost", "panel_autorepost_minutes")
 

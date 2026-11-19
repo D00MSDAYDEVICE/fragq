@@ -30,6 +30,45 @@ Players must link a Steam account before they can join a queue. See
 
 Optional; makes Steam lookups faster. See [Steam integration](steam.md#steam-web-api-key).
 
+## Fragdex
+
+FragQ can ask a [Fragdex](https://d00msdaydevice.github.io/fragdex/) server for the Discord account of a
+Steam ID that nobody linked in FragQ. It is a convenience for game servers, and off until you turn it on.
+
+1. In Fragdex, open **Settings → Fragdex API**. Copy the **Base URL** (such as
+   `https://fragdex.example.com/api/v1`) and create a key for FragQ. It only needs to read players, so leave
+   **See IP addresses**, **See notes**, **Add records** and **Game server** off. If FragQ always connects from
+   the same address, put it in the key's **Allowed IPs**.
+2. On FragQ's Settings page, enter the **Base URL** and the **API key** in the **Fragdex** panel.
+3. Press **Save**. FragQ saves both and tests them. **Test** checks what's in the boxes without saving it
+   (empty boxes test the saved settings).
+4. Once the test passes, the panel shows **Connected** and **Lookup unknown IDs using Fragdex** can be used.
+   It starts at **OFF** (red). Press **ON** (green) to turn lookups on.
+
+Until a connection passes a test, both **OFF** and **ON** are greyed out. Saving a different address or key turns
+lookups off again, until the new settings pass a test and you press **ON**. **Remove** forgets the address and
+key.
+
+### What a lookup does
+
+When a game server sends Steam IDs, FragQ first uses its own links. It asks Fragdex only about the Steam IDs
+nobody linked in FragQ, and uses an answer only if it is the Discord ID of a member of the server the game
+server's connector belongs to.
+
+| Where | With a Fragdex lookup |
+|---|---|
+| [Posted results](../connectors/index.md#what-a-posted-result-looks-like) | The player shows with their Discord name |
+| [Check linked players](../connectors/result-format.md#requests) | The player counts as linked; the answer says `"fragdex": true` |
+| [Voice moves](voice.md) | The player is moved like a linked player; the answer says `"fragdex": true` |
+
+What Fragdex says is never saved as a link in FragQ, never counts as verified, isn't sent back to Fragdex
+through a [Fragdex connector](../connectors/index.md#connect-fragdex), and never affects ratings or which FragQ
+match a result belongs to. Players who want a real link still use `!steam`, `!link` or the `/verify` page.
+
+FragQ remembers each answer for 10 minutes (5 for a Steam ID Fragdex doesn't know), and waits at most 3
+seconds for Fragdex, so a slow or unreachable Fragdex never holds up a game server. The panel shows how many
+players were found since FragQ started, and the last failed lookup.
+
 ## Linked players
 
 Every Steam link, with pending changes at the top and **Approve**, **Reject** and **Unlink** buttons.

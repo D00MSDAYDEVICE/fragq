@@ -69,6 +69,7 @@ class Perms:
 	def __init__(self, administrator=False, send_messages=True):
 		self.administrator = administrator
 		self.send_messages = send_messages
+		self.view_channel = self.connect = self.move_members = True
 
 
 class Role:
@@ -182,6 +183,20 @@ class TextChannel:
 		pass
 
 
+class VoiceChannel:
+	type = ChannelType.voice
+
+	def __init__(self, guild, cid, name, category=None, position=0):
+		self.guild, self.id, self.name, self.category, self.position = guild, cid, name, category, position
+
+	@property
+	def members(self):
+		return [m for m in self.guild.members if m.voice and m.voice.channel is self]
+
+	def permissions_for(self, member):
+		return Perms(administrator=getattr(member, "_admin", False))
+
+
 class DMChannel:
 	""" A member's direct messages with the bot (FakeInteraction needs .guild, which DMs don't have). """
 	type = ChannelType.private
@@ -209,6 +224,13 @@ class Member:
 		self.raw_status = "online"
 		self.activity = None
 		self.discriminator = "0"
+		self.voice = None   # SimpleNamespace(channel=VoiceChannel) while in voice
+
+	async def move_to(self, channel, reason=None):
+		if self.voice is None:
+			raise NotFound(SimpleNamespace(status=400, reason="Bad Request"), "Target user is not connected to voice.")
+		console.log.info(f"DEMO| voice: {self.name} moved to {channel.name} ({reason})")
+		self.voice = SimpleNamespace(channel=channel)
 
 	@property
 	def display_name(self):
@@ -242,6 +264,10 @@ class Guild:
 	@property
 	def text_channels(self):
 		return [c for c in self.channels if isinstance(c, TextChannel)]
+
+	@property
+	def voice_channels(self):
+		return [c for c in self.channels if isinstance(c, VoiceChannel)]
 
 	@property
 	def member_count(self):
@@ -287,6 +313,9 @@ def build_world():
 		("4v4-pug", pugs), ("3v3-pug", pugs), ("🟣│chud-pugs", pugs), ("🟡│ctf-pug", pugs), ("general", None),
 	]):
 		td.channels.append(TextChannel(td, next(ids), name, cat, i))
+	voice = Category("Voice", 2)
+	for i, name in enumerate(["🔊 Pickup Lobby", "🔴 Red Team", "🔵 Blue Team", "General Voice"]):
+		td.channels.append(VoiceChannel(td, next(ids), name, voice, 20 + i))
 	td.members.append(Member(td, OWNER, "therealdoomsday", admin=True))
 	for n in ["sk1nner", "st01c", "namastex", "trex", "bentley", "torrin", "flood", "cows", "monster", "doc",
 			  "rapha", "sotrix", "tensa", "nino", "brut", "koya"]:
@@ -472,6 +501,7 @@ async def dev_state(request):
 		channels=[dict(id=str(c.id), name=c.name) for c in g.text_channels if c.id in bot.queue_channels],
 		members=[dict(id=str(m.id), name=m.name) for m in g.members],
 		names=members,
+		voice={str(c.id): dict(name=c.name, members=[str(m.id) for m in c.members]) for c in g.voice_channels},
 		messages={str(c.id): [dict(m.data, id=str(m.id)) for m in c.messages] for c in g.text_channels},
 	))
 
@@ -520,6 +550,18 @@ async def dev_dm_press(request):
 	return web.json_response(dict(ok=True))
 
 
+async def dev_voice(request):
+	""" Put a member in a voice channel, or out of voice: {user_id, channel_id or null} """
+	body = await request.json()
+	member = dc.get_user(int(body["user_id"]))
+	channel = get_channel(int(body["channel_id"])) if body.get("channel_id") else None
+	if member is None or (body.get("channel_id") and not isinstance(channel, VoiceChannel)):
+		raise web.HTTPBadRequest(text="unknown member/voice channel")
+	for m in (x for g in GUILDS for x in g.members if x.id == member.id):
+		m.voice = SimpleNamespace(channel=channel) if channel else None
+	return web.json_response(dict(ok=True))
+
+
 async def dev_say(request):
 	body = await request.json()
 	channel, user = _channel_and_user(body)
@@ -551,6 +593,7 @@ async def main():
 	app.router.add_post("/dev/press", dev_press)
 	app.router.add_post("/dev/modal", dev_modal)
 	app.router.add_post("/dev/say", dev_say)
+	app.router.add_post("/dev/voice", dev_voice)
 	app.router.add_get("/dev/dms", dev_dms)
 	app.router.add_post("/dev/dm-press", dev_dm_press)
 	runner = web.AppRunner(app, access_log=None)

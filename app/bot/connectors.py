@@ -13,6 +13,7 @@ queue's channel. Every game needs its own tool (a server plugin, a log reader, a
 
 Players can also link their Steam account from a game server (!link in the minqlx plugin). The game
 server vouches for the Steam account; FragQ sends the Discord member a direct message to confirm it.
+With "Move players in voice", a game server can move players between a queue's voice channels (bot.voice).
 """
 import datetime as dt
 import hashlib
@@ -51,6 +52,7 @@ db.ensure_table(dict(
 		dict(cname="can_check", ctype=db.types.bool),
 		dict(cname="can_link", ctype=db.types.bool),
 		dict(cname="can_export", ctype=db.types.bool),       # read every linked account of the server (Fragdex)
+		dict(cname="can_voice", ctype=db.types.bool),        # move players between a queue's voice channels
 		dict(cname="allowed_ips", ctype=db.types.text),      # space separated IPs / CIDR ranges; empty = any
 		dict(cname="rate_limit", ctype=db.types.int),        # requests per minute; 0 = unlimited
 		dict(cname="expires_at", ctype=db.types.str),        # last valid day (UTC, YYYY-MM-DD); empty = never
@@ -144,7 +146,7 @@ def _decode(row):
 		row["queues"] = [int(x) for x in (queues if isinstance(queues, list) else json.loads(queues))]
 	except (TypeError, ValueError):
 		row["queues"] = []
-	for k in ("can_results", "can_check", "can_link", "can_export", "disabled"):
+	for k in ("can_results", "can_check", "can_link", "can_export", "can_voice", "disabled"):
 		row[k] = bool(row.get(k))
 	for k in ("requests", "last_used_at", "last_denied_at", "rate_limit", "unmatched_queue"):
 		row[k] = int(row.get(k) or 0)
@@ -199,7 +201,7 @@ def parse_settings(values, guild_id, current=None):
 		queues = list(dict.fromkeys(int(x) for x in values.get("queues") or []))
 	except (TypeError, ValueError):
 		raise ValueError("Unknown queue.")
-	perms = {k: bool(values.get(k)) for k in ("can_results", "can_check", "can_link", "can_export")}
+	perms = {k: bool(values.get(k)) for k in ("can_results", "can_check", "can_link", "can_export", "can_voice")}
 	if not any(perms.values()):
 		raise ValueError("Allow the key to do at least one thing.")
 	if not queues and any(v for k, v in perms.items() if k != "can_export"):  # reading links needs no queue
@@ -310,7 +312,7 @@ async def restore(guild_id, x, queues, unmatched, old=None):
 		name=str(x.get("name") or "Connector")[:60], game=game, queues=json.dumps([str(q) for q in queues]),
 		unmatched_queue=unmatched or 0, prefix=str(x.get("prefix") or PREFIX)[:20], key_hash=x["key_hash"],
 		can_results=bool(x.get("can_results")), can_check=bool(x.get("can_check")), can_link=bool(x.get("can_link")),
-		can_export=bool(x.get("can_export")), allowed_ips=allowed, rate_limit=rate, expires_at=expires if DATE_RE.match(expires) else "", disabled=bool(x.get("disabled")),
+		can_export=bool(x.get("can_export")), can_voice=bool(x.get("can_voice")), allowed_ips=allowed, rate_limit=rate, expires_at=expires if DATE_RE.match(expires) else "", disabled=bool(x.get("disabled")),
 	)
 	if old:
 		return await _save(old, fields)
@@ -409,7 +411,7 @@ def authenticate(raw_key, ip, need=None):
 							 {"Retry-After": str(retry)})
 	if need and not c[need]:
 		what = {"can_results": "send match results", "can_check": "check linked players", "can_link": "link Steam accounts",
-				"can_export": "read linked accounts"}[need]
+				"can_export": "read linked accounts", "can_voice": "move players in voice"}[need]
 		_denied(c, ip, need)
 		raise ConnectorError(403, f"This connector isn't allowed to {what}. Change that on the Connectors page of the FragQ web panel.")
 	c.update(requests=c["requests"] + 1, last_used_at=int(time.time()), last_used_ip=ip[:191])
@@ -435,7 +437,7 @@ def status(c):
 		connector=dict(
 			name=c["name"], game=GAME.get(c["game"], GAME["generic"])[1],
 			queues=[q.name for q, _ in queue_objects(c)],
-			can=dict(results=c["can_results"], check=c["can_check"], link=c["can_link"], export=c["can_export"]),
+			can=dict(results=c["can_results"], check=c["can_check"], link=c["can_link"], export=c["can_export"], voice=c["can_voice"]),
 		),
 		server_time=int(time.time()),
 	)
@@ -550,9 +552,12 @@ def _steam_owners():
 	return {r["steam_id"]: uid for uid, r in bot.steam.links.items()}
 
 
-def player_users(result):
-	""" Discord user id per result player id, for the players FragQ can identify. """
-	owners = _steam_owners()
+def player_users(result, extra=None):
+	"""
+	Discord user id per result player id, for the players FragQ can identify. `extra` adds members found
+	with a Fragdex lookup ({steam_id: user id}); only for showing names, never for finding the FragQ match.
+	"""
+	owners = dict(extra or {}, **_steam_owners())
 	out = {}
 	for p in result["players"]:
 		if p["id_type"] == "steam" and p["id"] in owners:
@@ -619,9 +624,9 @@ async def find_match(c, result):
 
 # ------------------------------------------------------------------ the Discord message
 
-def _shown_names(result, guild):
+def _shown_names(result, guild, extra=None):
 	""" What to call each player: their Discord name when FragQ knows them, else the name from the game. """
-	users = player_users(result)
+	users = player_users(result, extra)
 	out = {}
 	for p in result["players"]:
 		member = guild.get_member(users[p["id"]]) if guild and p["id"] in users else None
@@ -658,9 +663,9 @@ def _table(players, columns, names, width=1000):
 	return "```\n" + "\n".join(out) + "\n```"
 
 
-def build_embed(c, result, match=None, guild=None, test=False):
+def build_embed(c, result, match=None, guild=None, test=False, extra=None):
 	_, game_label, emoji, colour = GAME.get(c["game"], GAME["generic"])
-	names = _shown_names(result, guild)
+	names = _shown_names(result, guild, extra)
 	esc = lambda s: escape_markdown(str(s))
 
 	if match:
@@ -715,8 +720,9 @@ async def post(c, result, match=None, queue_qc=None, test=False):
 	channel = dc.get_channel(qc.id) if qc else None
 	if channel is None:
 		return None
+	extra = await bot.fragdex.owners([p["id"] for p in result["players"] if p["id_type"] == "steam"], channel.guild)
 	try:
-		msg = await channel.send(embed=build_embed(c, result, match, channel.guild, test), allowed_mentions=AllowedMentions.none())
+		msg = await channel.send(embed=build_embed(c, result, match, channel.guild, test, extra), allowed_mentions=AllowedMentions.none())
 	except DiscordException as e:
 		log.error(f"Connector '{c['name']}' couldn't post a result in #{getattr(channel, 'name', qc.id)}: {e}")
 		return None
@@ -799,22 +805,24 @@ def resolve_member(guild, text):
 	return nick[0] if len(nick) == 1 else None
 
 
-def linked(c, steam_ids):
-	""" POST /players/linked """
+async def linked(c, steam_ids):
+	""" POST /players/linked. A player found with a Fragdex lookup counts as linked, with fragdex: true. """
 	if not isinstance(steam_ids, list) or len(steam_ids) > 64:
 		raise ConnectorError(400, "'steam_ids' must be a list of at most 64 SteamID64s.")
+	steam_ids = [str(sid) for sid in steam_ids]
+	for sid in steam_ids:
+		if not STEAM_RE.match(sid):
+			raise ConnectorError(400, f"'{sid[:20]}' is not a SteamID64.")
 	owners = _steam_owners()
 	guild = dc.get_guild(c["guild_id"])
+	found = await bot.fragdex.owners([sid for sid in steam_ids if sid not in owners], guild)
 	waiting = {p["steam_id"] for p in pending_links.values()}
 	out = []
 	for sid in steam_ids:
-		sid = str(sid)
-		if not STEAM_RE.match(sid):
-			raise ConnectorError(400, f"'{sid[:20]}' is not a SteamID64.")
-		uid = owners.get(sid)
+		uid = owners.get(sid) or found.get(sid)
 		member = guild.get_member(uid) if guild and uid else None
 		out.append(dict(steam_id=sid, linked=uid is not None, member=member is not None,
-						discord_name=get_nick(member) if member else None, confirming=sid in waiting))
+						discord_name=get_nick(member) if member else None, confirming=sid in waiting, fragdex=sid in found))
 	return dict(ok=True, players=out)
 
 

@@ -383,9 +383,12 @@ class Match:
 		except DiscordException:
 			pass
 		bot.panel.bump(self.qc)
+		bot.voice.start(bot.voice.match_started(self))
 
 	async def finish_match(self, ctx):
 		bot.active_matches.remove(self)
+		if self.state == self.WAITING_REPORT:  # reported; an unranked match ends as soon as it starts
+			bot.voice.start(bot.voice.match_ended(self))
 		self.queue.last_maps += self.maps
 		self.queue.last_maps = self.queue.last_maps[-len(self.maps)*self.queue.cfg.map_cooldown:]
 
@@ -407,3 +410,5 @@ class Match:
 		except DiscordException:
 			pass
 		bot.active_matches.remove(self)
+		if self.state == self.WAITING_REPORT:
+			bot.voice.start(bot.voice.match_ended(self))

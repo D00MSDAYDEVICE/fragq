@@ -172,6 +172,16 @@ async def _rc(ctx: MessageContext, args: str = None):
 	await bot.commands.report(ctx, result='abort')
 
 
+@message_command('report_win', 'rw')
+async def _rw(ctx: MessageContext, args: str = None):
+	match_id, _, team = (args or "").strip().partition(" ")
+	team = team.strip()
+	if not match_id.isdigit() or not team:
+		raise bot.Exc.SyntaxError(f"Usage: {ctx.qc.cfg.prefix}rw __match_id__ __team_name__/draw")
+	draw = team.lower() == "draw"
+	await bot.commands.report_admin(ctx, match_id=int(match_id), winner_team=None if draw else team, draw=draw)
+
+
 @message_command('allow_offline', 'ao')
 async def _ao(ctx: MessageContext, args: str = None):
 	await bot.commands.allow_offline(ctx)

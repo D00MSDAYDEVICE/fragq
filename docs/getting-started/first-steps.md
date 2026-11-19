@@ -20,13 +20,15 @@ Press **Invite bot** in the top bar, pick your server and approve. The bot asks 
 | Read Message History, Manage Messages | Updating, moving and cleaning up its own messages |
 | Manage Roles | Rank roles and promotion roles |
 | Manage Channels | The same as PUBobot2 |
+| View Channels, Connect, Move Members | [Voice moves](../administration/voice.md), off until you turn them on for a queue |
 
 The server then shows up in the rail on the left.
 
 !!! note "Bot already on the server?"
     Embed Links and Attach Files were added to the invite in FragQ 1.0.0. If the bot joined with an
     older link, give its role those two permissions in **Server Settings → Roles**, or invite it again
-    with the new link (it stays on the server and keeps everything).
+    with the new link (it stays on the server and keeps everything). The same goes for View Channels,
+    Connect and Move Members, added in FragQ 1.3.0 for [voice moves](../administration/voice.md).
 
 !!! note "Rating prefixes in nicknames"
     The channel setting *Set ratings to nicks* (`rating_nicks`) also needs **Manage Nicknames**, which

@@ -188,6 +188,7 @@
         if (opts.kind === "user") btn.appendChild(cur.avatar ? h("img", { class: "av-sm round", src: cur.avatar, alt: "" }) : icon("users"));
         if (opts.kind === "role") btn.appendChild(h("span", { class: "rdot", style: cur.color ? "background:" + cur.color : "" }));
         if (opts.kind === "channel") btn.appendChild(icon("hash"));
+        if (opts.kind === "voice") btn.appendChild(icon("voice"));
         btn.appendChild(h("span", { class: "v", text: cur.name }));
       } else if (opts.value) {
         btn.appendChild(h("span", { class: "v", text: (opts.missing || "Unknown") + " (" + opts.value + ")" }));
@@ -216,6 +217,7 @@
           if (opts.kind === "user") b.appendChild(it.avatar ? h("img", { class: "av-sm round", src: it.avatar, alt: "", loading: "lazy" }) : icon("users"));
           if (opts.kind === "role" && it.id) b.appendChild(h("span", { class: "rdot", style: it.color ? "background:" + it.color : "" }));
           if (opts.kind === "channel" && it.id) b.appendChild(icon("hash"));
+          if (opts.kind === "voice" && it.id) b.appendChild(icon("voice"));
           b.appendChild(h("span", { text: it.name }));
           if (it.meta) b.appendChild(h("span", { class: "meta", text: it.meta }));
           list.appendChild(b);
@@ -939,6 +941,7 @@
       if (S.route.page !== "settings") return;
       clear(body);
       append(body, botSettingsPanel(s));
+      append(body, fragdexPanel(s.fragdex));
       append(body, steamLinksPanel());
       append(body, backupPanel());
     }).catch(function (e) { clear(body); append(body, h("div", { class: "flash flash-error", text: e.message })); });
@@ -1027,6 +1030,105 @@
           h("a", { href: "https://steamcommunity.com/dev/apikey", target: "_blank", rel: "noopener noreferrer", text: "steamcommunity.com/dev/apikey" }),
           ". It is checked with Steam when you save, and never shown again in full."),
         h("div", { class: "f-body" }, keyInput, h("div", { class: "key-actions" }, saveBtn, testBtn, removeBtn), keyErr)));
+  }
+
+  // Fragdex lookups: the address and key of a Fragdex API, a Test and a Save button, and the switch, which can
+  // only be used once the saved address and key passed a test.
+  function fragdexPanel(fd) {
+    var badge = h("span"), info = h("div", { class: "f-null" }), err = fieldErr(), lookupErr = fieldErr();
+    var urlInput = h("input", { type: "text", inputmode: "url", autocomplete: "off", spellcheck: "false", class: "mono", style: "max-width:420px",
+      placeholder: "https://fragdex.example.com/api/v1", "aria-label": "Fragdex API address" });
+    var keyInput = h("input", { type: "password", autocomplete: "off", spellcheck: "false", class: "mono", style: "max-width:420px",
+      "aria-label": "Fragdex API key" });
+    var saveBtn = h("button", { class: "btn btn-primary", type: "button", onclick: save }, icon("check"), "Save");
+    var testBtn = h("button", { class: "btn", type: "button", onclick: test }, icon("pulse"), "Test");
+    var removeBtn = h("button", { class: "btn btn-ghost", type: "button", onclick: remove }, icon("trash"), "Remove");
+    var offBtn = h("button", { type: "button", role: "radio", onclick: function () { setLookup(false); } }, icon("x"), " off");
+    var onBtn = h("button", { type: "button", role: "radio", onclick: function () { setLookup(true); } }, icon("check"), " on");
+    var toggle = h("div", { class: "seg", role: "radiogroup", "aria-label": "Lookup unknown IDs using Fragdex" }, offBtn, onBtn);
+
+    function form() { return { url: urlInput.value.trim(), api_key: keyInput.value.trim() }; }
+    function busy(on) { saveBtn.disabled = testBtn.disabled = on; removeBtn.disabled = on || !(fd.url || fd.key_set); }
+    function save() {
+      var f = form();
+      if (!f.url) return err.show("Enter the address of the Fragdex API.");
+      if (!f.api_key && !fd.key_set) return err.show("Enter the API key.");
+      busy(true);
+      api("PUT", "/api/settings", { fragdex: f }).then(function (r) {
+        fd = r.fragdex; draw();
+        if (fd.test_error) err.show("Saved, but the test failed: " + fd.test_error);
+        else { err.show(null); toast("Fragdex connection saved and tested. Lookups can now be turned on."); }
+      }).catch(function (e) { err.show(e.fields && (e.fields.url || e.fields.api_key) || e.message); }).then(function () { busy(false); });
+    }
+    function test() {
+      var f = form();
+      if (!f.url && !fd.url) return err.show("Enter the address of the Fragdex API.");
+      busy(true);
+      api("POST", "/api/settings/fragdex/test", f).then(function (r) {
+        fd = r.settings.fragdex; draw(); err.show(null);
+        toast("Fragdex " + r.version + " answered" + (r.key_name ? " to the key '" + r.key_name + "'" : "") + "." + (r.saved ? "" : " Press Save to keep these settings."));
+      }).catch(function (e) { err.show(e.message); }).then(function () { busy(false); });
+    }
+    function remove() {
+      confirmModal({ title: "Remove Fragdex connection", text: "FragQ forgets the address and key and stops looking up IDs in Fragdex.", ok: "Remove", danger: true })
+        .then(function (ok) {
+          if (!ok) return;
+          busy(true);
+          api("PUT", "/api/settings", { fragdex: { remove: true } }).then(function (r) { fd = r.fragdex; draw(); err.show(null); toast("Fragdex connection removed."); })
+            .catch(function (e) { err.show(e.message); }).then(function () { busy(false); });
+        });
+    }
+    function setLookup(on) {
+      if (!fd.connected || on === fd.lookup) return;
+      api("PUT", "/api/settings", { fragdex: { lookup: on } }).then(function (r) {
+        fd = r.fragdex; draw(); lookupErr.show(null);
+        toast(on ? "FragQ now looks up unknown Steam IDs in Fragdex." : "Fragdex lookups are off.");
+      }).catch(function (e) { lookupErr.show(e.message); draw(); });
+    }
+    function draw() {
+      var tested = fd.connected;
+      badge.className = "badge " + (tested ? "ok" : fd.url ? "warn" : "");
+      badge.textContent = tested ? "Connected" + (fd.version ? " · Fragdex " + fd.version : "") : fd.url ? "Not tested" : "Not set up";
+      urlInput.value = fd.url || "";
+      keyInput.value = "";
+      keyInput.placeholder = fd.key_set ? "Saved key ends in …" + fd.key_hint + ". Paste a new key to replace it." : "fdx_…";
+      removeBtn.disabled = !(fd.url || fd.key_set);
+      [offBtn, onBtn].forEach(function (b) { b.disabled = !tested; });
+      offBtn.className = "opt-off" + (tested && !fd.lookup ? " on" : "");
+      onBtn.className = "opt-on" + (tested && fd.lookup ? " on" : "");
+      offBtn.setAttribute("aria-checked", tested && !fd.lookup ? "true" : "false");
+      onBtn.setAttribute("aria-checked", tested && fd.lookup ? "true" : "false");
+      var lines = [];
+      if (!tested) lines.push("Save and test a connection to use this switch.");
+      else {
+        lines.push("Tested " + fmtDate(fd.tested_at) + (fd.key_name ? " with the key '" + fd.key_name + "'" : "") + ".");
+        if (fd.active) lines.push(fd.found + " player" + (fd.found === 1 ? "" : "s") + " found through Fragdex since FragQ started.");
+      }
+      if (fd.last_error) lines.push("Last lookup failed: " + fd.last_error.message);
+      info.textContent = lines.join(" ");
+    }
+    urlInput.addEventListener("keydown", function (e) { if (e.key === "Enter") save(); });
+    keyInput.addEventListener("keydown", function (e) { if (e.key === "Enter") save(); });
+    draw();
+
+    return h("section", { class: "panel" },
+      h("div", { class: "panel-head" }, h("h2", { text: "Fragdex" }), badge),
+      h("div", { class: "field" },
+        h("div", { class: "f-head" }, h("span", { class: "f-title", text: "Fragdex API" })),
+        h("p", { class: "f-desc", text: "Optional. When a game server sends a Steam ID nobody linked in FragQ, FragQ can ask Fragdex for that player's Discord account. " +
+          "In Fragdex, open Settings › Fragdex API, copy the Base URL and create a key for FragQ. It only needs to read players." }),
+        h("div", { class: "f-body fdx-form" },
+          h("label", {}, h("span", { class: "muted", text: "Base URL" }), urlInput),
+          h("label", {}, h("span", { class: "muted", text: "API key" }), keyInput),
+          h("div", { class: "key-actions" }, saveBtn, testBtn, removeBtn), err)),
+      h("div", { class: "field" },
+        h("div", { class: "f-row-inline" },
+          h("div", {}, h("div", { class: "f-head" }, h("span", { class: "f-title", text: "Lookup unknown IDs using Fragdex" })),
+            h("p", { class: "f-desc", text: "A convenience for game servers: posted results show the Discord names of these players, and the linked-player check and voice moves find them. " +
+              "What Fragdex says is never saved as a link in FragQ, never counts as verified, and never affects ratings or which match a result belongs to. " +
+              "It only counts for members of the server the game server's connector belongs to." })),
+          h("div", { class: "f-body" }, toggle)),
+        info, lookupErr));
   }
 
   function proofBadge(r) {
@@ -1481,7 +1583,8 @@
   // ------------------------------------------------------------------ connectors page (game connectors, see bot/connectors.py)
   var DOCS = "https://d00msdaydevice.github.io/fragq/";
   var DENIED = { ip: "IP not allowed", expired: "key expired", disabled: "connector disabled", can_results: "results not allowed",
-    can_check: "player checks not allowed", can_link: "Steam linking not allowed", can_export: "reading linked accounts not allowed" };
+    can_check: "player checks not allowed", can_link: "Steam linking not allowed", can_export: "reading linked accounts not allowed",
+    can_voice: "voice moves not allowed" };
 
   function renderConnectors() {
     S.editor = null;
@@ -1527,7 +1630,7 @@
       } }, icon("copy")));
   }
 
-  function exportOnly(c) { return c.can_export && !c.can_results && !c.can_check && !c.can_link; }
+  function exportOnly(c) { return c.can_export && !c.can_results && !c.can_check && !c.can_link && !c.can_voice; }
 
   function gameOf(d, id) { return d.games.find(function (g) { return g.id === id; }) || d.games[0]; }
 
@@ -1622,7 +1725,8 @@
           c.can_results ? h("span", { class: "pchip", text: "Match results" }) : null,
           c.can_check ? h("span", { class: "pchip", text: "Check linked players" }) : null,
           c.can_link ? h("span", { class: "pchip", text: "Link Steam from game" }) : null,
-          c.can_export ? h("span", { class: "pchip", text: "Read linked accounts" }) : null)),
+          c.can_export ? h("span", { class: "pchip", text: "Read linked accounts" }) : null,
+          c.can_voice ? h("span", { class: "pchip", text: "Move players in voice" }) : null)),
       h("dl", { class: "conn-meta" }, meta.map(function (m) { return h("div", { class: m[2] || "" }, h("dt", { text: m[0] }), h("dd", { text: m[1] })); })),
       h("div", { class: "key-actions" },
         h("button", { class: "btn btn-sm", type: "button", onclick: function () { connectorModal(d, base, c, reload); } }, icon("edit"), "Edit"),
@@ -1652,11 +1756,11 @@
     fragdex = fragdex || (editing && exportOnly(c));
     var m = modal({ title: (editing ? "Edit " : "Create ") + (fragdex ? "Fragdex connector" : "connector"), wide: true });
     var st = editing ? clone(c) : { name: "", game: "generic", queues: d.queues.length === 1 ? [d.queues[0].id] : [], unmatched_queue: "",
-      can_results: true, can_check: true, can_link: true, can_export: false, allowed_ips: [], rate_limit: d.default_rate, expires_at: "" };
+      can_results: true, can_check: true, can_link: true, can_export: false, can_voice: false, allowed_ips: [], rate_limit: d.default_rate, expires_at: "" };
     if (fragdex && !editing) {
       st.name = "Fragdex";
       st.queues = [];
-      st.can_results = st.can_check = st.can_link = false;
+      st.can_results = st.can_check = st.can_link = st.can_voice = false;
       st.can_export = true;
     }
     var name = h("input", { type: "text", maxlength: "60", value: st.name, placeholder: "CA server #1, CS2 retake server…" });
@@ -1698,6 +1802,7 @@
       ["can_results", "Send match results", "Post end-of-match results and stats in the queue's channel."],
       ["can_check", "Check linked players", "Ask whether players have linked a Steam account, so the server can keep unlinked players in spectator."],
       ["can_link", "Link Steam accounts from the game", "Players can type !link on the game server. FragQ asks them to confirm in a Discord direct message."],
+      ["can_voice", "Move players in voice", "Move players between a queue's Lobby and team voice channels, for substitutes and team changes. Only works for queues with voice moves turned on."],
       ["can_export", "Read linked accounts", "Read every Steam and Discord link of this server's members, for a tool such as Fragdex. Needs no queue. Don't give this to a game server."],
     ].map(function (p) {
       var cb = h("input", { type: "checkbox", checked: !!st[p[0]], onchange: function () { st[p[0]] = cb.checked; } });
@@ -1727,7 +1832,7 @@
     function submit() {
       save.disabled = true;
       var payload = { name: name.value, game: game.value, queues: st.queues, unmatched_queue: st.unmatched_queue,
-        can_results: st.can_results, can_check: st.can_check, can_link: st.can_link, can_export: st.can_export,
+        can_results: st.can_results, can_check: st.can_check, can_link: st.can_link, can_export: st.can_export, can_voice: st.can_voice,
         rate_limit: rate.value, expires_at: expires.value, allowed_ips: ips.value };
       (editing ? api("PUT", base + "/" + c.id, payload) : api("POST", base, payload)).then(function (r) {
         m.close();
@@ -2108,7 +2213,7 @@
       case "slider": return "100";
       case "duration": return "00:05:00";
       case "table": return [];
-      case "role": case "channel": case "member": return null;
+      case "role": case "channel": case "voice": case "member": return null;
       default: return "";
     }
   }
@@ -2180,6 +2285,7 @@
       case "duration": return duration(val, function (x) { self.set(name, x); });
       case "role": return rolePicker(val, function (x) { self.set(name, x); });
       case "channel": return channelPicker(val, function (x) { self.set(name, x); });
+      case "voice": return voicePicker(val, function (x) { self.set(name, x); });
       case "table": return this.table(v);
       default:
         return h("input", { type: "text", value: val === null ? "" : val, autocomplete: "off", spellcheck: "false",
@@ -2190,7 +2296,7 @@
   function seg(options, val, onChange, plain) {
     var el = h("div", { class: "seg", role: "radiogroup" });
     options.forEach(function (o) {
-      var b = h("button", { class: (plain ? "" : o) + (o === val ? " on" : ""), type: "button", role: "radio", "aria-checked": o === val ? "true" : "false",
+      var b = h("button", { class: (plain ? "" : "opt-" + o) + (o === val ? " on" : ""), type: "button", role: "radio", "aria-checked": o === val ? "true" : "false",
         onclick: function () {
           Array.prototype.forEach.call(el.children, function (c) { c.classList.remove("on"); c.setAttribute("aria-checked", "false"); });
           b.classList.add("on"); b.setAttribute("aria-checked", "true");
@@ -2235,6 +2341,12 @@
   function channelPicker(val, onChange) {
     return picker({ kind: "channel", value: val, placeholder: "Select a channel…", missing: "Missing channel", allowNone: true, noneLabel: "No channel",
       items: S.guild.text_channels.map(function (c) { return { id: c.id, name: c.name, meta: c.category || "" }; }),
+      onChange: onChange });
+  }
+
+  function voicePicker(val, onChange) {
+    return picker({ kind: "voice", value: val, placeholder: "Select a voice channel…", missing: "Missing channel", allowNone: true, noneLabel: "No channel",
+      items: (S.guild.voice_channels || []).map(function (c) { return { id: c.id, name: c.name, meta: c.category || "" }; }),
       onChange: onChange });
   }
 

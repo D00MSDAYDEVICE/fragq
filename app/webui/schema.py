@@ -14,7 +14,7 @@ import re
 
 from core.cfg_factory import (
 	Variable, StrVar, EmojiVar, TextVar, OptionVar, BoolVar, IntVar, SliderVar, RoleVar, MemberVar,
-	TextChanVar, DurationVar, VariableTable
+	TextChanVar, VoiceChanVar, DurationVar, VariableTable
 )
 
 TYPE_NAMES = [
@@ -29,6 +29,7 @@ TYPE_NAMES = [
 	(IntVar, 'int'),
 	(RoleVar, 'role'),
 	(MemberVar, 'member'),
+	(VoiceChanVar, 'voice'),
 	(TextChanVar, 'channel'),
 	(DurationVar, 'duration'),
 ]

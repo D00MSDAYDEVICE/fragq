@@ -278,6 +278,7 @@ def settings_dict():
 			require_link=bot.steam.required(),
 			linked=len(bot.steam.links),
 		),
+		fragdex=bot.fragdex.status(),
 	)
 
 
@@ -313,7 +314,70 @@ async def api_settings_save(request):
 	if "require_link" in steam:
 		await bot.settings.put("require_steam_link", bool(steam["require_link"]))
 		log.info(f"WEBUI| {who} turned {'on' if steam['require_link'] else 'off'} 'Require linked Steam IDs'.")
+	fdx = body.get("fragdex")
+	if isinstance(fdx, dict):
+		return await _save_fragdex(fdx, who)
 	return web.json_response(settings_dict())
+
+
+async def _save_fragdex(fdx, who):
+	""" Fragdex lookups: save (and test) the address and key, remove them, or turn lookups on or off. """
+	if fdx.get("remove"):
+		for name in ("fragdex_url", "fragdex_key", "fragdex_ok", "fragdex_lookup"):
+			await bot.settings.put(name, bot.settings.DEFAULTS[name])
+		bot.fragdex.forget()
+		log.info(f"WEBUI| {who} removed the Fragdex connection.")
+		return web.json_response(settings_dict())
+	if "url" in fdx or "api_key" in fdx:
+		address = str(fdx.get("url") if "url" in fdx else bot.fragdex.url()).strip().rstrip("/")
+		key = str(fdx.get("api_key") or "").strip() or bot.fragdex.key()
+		if not re.match(r"^https?://[^\s/]+", address):
+			msg = "Enter the address, starting with https:// (or http://)."
+			return jerror(400, msg, fields=dict(url=msg))
+		if not key:
+			msg = "Enter the API key."
+			return jerror(400, msg, fields=dict(api_key=msg))
+		if len(address) > 300 or len(key) > 200:
+			return jerror(400, "The address or key is too long.")
+		if (address, key) != (bot.fragdex.url(), bot.fragdex.key()):
+			await bot.settings.put("fragdex_url", address)
+			await bot.settings.put("fragdex_key", key)
+			await bot.settings.put("fragdex_lookup", False)   # a new connection starts with lookups off
+			bot.fragdex.forget()
+			log.info(f"WEBUI| {who} saved the Fragdex connection ({bot.fragdex.api_base(address)}).")
+		out = settings_dict()
+		try:
+			info = await bot.fragdex.test(address, key)
+		except bot.fragdex.FragdexError as e:
+			out["fragdex"]["test_error"] = str(e)
+			return web.json_response(out)
+		await bot.fragdex.record_test(address, key, info)
+		return web.json_response(settings_dict())
+	if "lookup" in fdx:
+		on = bool(fdx["lookup"])
+		if on and not bot.fragdex.connected():
+			return jerror(400, "Test the Fragdex connection first.")
+		await bot.settings.put("fragdex_lookup", on)
+		bot.fragdex.forget()
+		log.info(f"WEBUI| {who} turned {'on' if on else 'off'} 'Lookup unknown IDs using Fragdex'.")
+	return web.json_response(settings_dict())
+
+
+async def api_settings_fragdex_test(request):
+	""" Test the address and key in the form (empty = the saved ones) without saving them. """
+	if err := owner_error(request):
+		return err
+	body = await read_json(request)
+	address = str(body.get("url") or "").strip().rstrip("/") or bot.fragdex.url()
+	key = str(body.get("api_key") or "").strip() or bot.fragdex.key()
+	try:
+		info = await bot.fragdex.test(address, key)
+	except bot.fragdex.FragdexError as e:
+		return jerror(400, str(e))
+	saved = (address, key) == (bot.fragdex.url(), bot.fragdex.key())
+	if saved:
+		await bot.fragdex.record_test(address, key, info)
+	return web.json_response(dict(ok=True, saved=saved, **info, settings=settings_dict()))
 
 
 async def api_settings_steam_test(request):
@@ -510,6 +574,10 @@ async def api_guild(request):
 		)
 		for c in sorted(guild.text_channels, key=lambda c: (c.category.position if c.category else -1, c.position))
 	]
+	voice_channels = [
+		dict(id=str(c.id), name=c.name, category=c.category.name if c.category else None)
+		for c in sorted(guild.voice_channels, key=lambda c: (c.category.position if c.category else -1, c.position))
+	]
 	roles = [
 		dict(id=str(r.id), name=r.name, color=f"#{r.color.value:06x}" if r.color.value else None, managed=r.managed)
 		for r in reversed(guild.roles)
@@ -518,7 +586,7 @@ async def api_guild(request):
 		id=str(guild.id), name=guild.name, icon=icon_url(guild),
 		admin=acc.admin, perms=perm_list(acc.server), manage_users=acc.can_manage_users(),
 		members=guild.member_count,
-		channels=channels, text_channels=text_channels, roles=roles,
+		channels=channels, text_channels=text_channels, voice_channels=voice_channels, roles=roles,
 	))
 
 
@@ -745,7 +813,7 @@ def connector_dict(c, counts=None):
 	return dict(
 		id=str(c["id"]), name=c["name"], game=c["game"], prefix=c["prefix"], state=bot.connectors.state(c),
 		queues=[str(q) for q in c["queues"] if q in live], unmatched_queue=str(c["unmatched_queue"] or ""),
-		can_results=c["can_results"], can_check=c["can_check"], can_link=c["can_link"], can_export=c["can_export"],
+		can_results=c["can_results"], can_check=c["can_check"], can_link=c["can_link"], can_export=c["can_export"], can_voice=c["can_voice"],
 		allowed_ips=c["allowed_ips"].split() if c["allowed_ips"] else [], rate_limit=c["rate_limit"], expires_at=c["expires_at"],
 		disabled=c["disabled"], requests=c["requests"], last_used_at=c["last_used_at"], last_used_ip=c["last_used_ip"],
 		last_denied_at=c["last_denied_at"], last_denied_ip=c["last_denied_ip"], last_denied_reason=c["last_denied_reason"],
@@ -870,7 +938,7 @@ async def connect_results(c, body):
 
 
 async def connect_linked(c, body):
-	return bot.connectors.linked(c, body.get("steam_ids") if isinstance(body, dict) else None)
+	return await bot.connectors.linked(c, body.get("steam_ids") if isinstance(body, dict) else None)
 
 
 async def connect_link(c, body):
@@ -879,6 +947,10 @@ async def connect_link(c, body):
 
 async def connect_steam_links(c, body):
 	return bot.connectors.steam_links(c)
+
+
+async def connect_voice(c, body):
+	return await bot.voice.from_game(c, body)
 
 
 async def download_plugin(request):
@@ -1259,6 +1331,7 @@ def make_app():
 	r.add_get("/api/settings", api_settings)
 	r.add_put("/api/settings", api_settings_save)
 	r.add_post("/api/settings/steam/test", api_settings_steam_test)
+	r.add_post("/api/settings/fragdex/test", api_settings_fragdex_test)
 	r.add_get("/api/settings/backup", api_backup)
 	r.add_post("/api/settings/restore", api_restore)
 	r.add_get("/api/steam/links", api_steam_links)
@@ -1314,6 +1387,7 @@ def make_app():
 	r.add_post(CONNECT + "/players/linked", connect_api(connect_linked, "can_check"))
 	r.add_post(CONNECT + "/link", connect_api(connect_link, "can_link"))
 	r.add_get(CONNECT + "/steam/links", connect_api(connect_steam_links, "can_export"))
+	r.add_post(CONNECT + "/voice", connect_api(connect_voice, "can_voice"))
 	r.add_get("/downloads/minqlx/{name}", download_plugin)
 
 	r.add_static("/static", STATIC, append_version=False)

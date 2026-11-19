@@ -45,7 +45,7 @@ or be a server admin.
     | **Game** | Generic, Apex Legends, Battlefield 6, Counter-Strike 2, Overwatch 2 or Quake Live. It sets the icon and colour of posted results; the format is the same for every game. Use **Generic** for anything not listed. |
     | **Queues** | The queues this game server plays. A connector can serve several queues, and a queue can have several connectors. A key that only reads linked accounts needs none. |
     | **Results without a FragQ match** | Where results go when FragQ can't find the match (see below): one of the connector's queues, or nowhere (stored only) |
-    | **What the key can do** | *Send match results*, *Check linked players* and *Link Steam accounts from the game*. Untick what the game server doesn't need. *Read linked accounts* is off by default and is for tools such as Fragdex, not game servers: it reads every Steam and Discord link of this server's members. |
+    | **What the key can do** | *Send match results*, *Check linked players* and *Link Steam accounts from the game*. Untick what the game server doesn't need. *Move players in voice* is off by default and moves players between a queue's [voice channels](../administration/voice.md). *Read linked accounts* is off by default and is for tools such as Fragdex, not game servers: it reads every Steam and Discord link of this server's members. |
     | **Rate limit** | Requests per minute, 60 by default. 0 = unlimited. |
     | **Expires** | The last day the key works (UTC). Empty = never. |
     | **Allowed IPs** | IP addresses or ranges the key may be used from, one per line, such as `203.0.113.10` or `198.51.100.0/24`. Empty = any address. Use the game server's public address. |
@@ -66,6 +66,9 @@ Steam account, and whether they proved it. It has its own **Fragdex** panel on t
 
 Keys with only the *Read linked accounts* permission are listed in this panel. All other connectors are
 under **Additional Connectors**.
+
+FragQ can also ask Fragdex about Steam IDs nobody linked in FragQ. That is set up separately, with a Fragdex API
+key, on the [Settings page](../administration/settings-page.md#fragdex).
 
 ## Manage connectors
 

@@ -20,6 +20,7 @@ Authorization: Bearer fq_...
 | `POST /players/linked` | Check linked players | `{"steam_ids": ["7656…", …]}` (up to 64): which players have a linked Steam account |
 | `POST /link` | Link Steam accounts from the game | `{"steam_id": "7656…", "name": "in-game name", "discord": "user id or username"}`: ask the member to confirm the link in Discord |
 | `GET /steam/links` | Read linked accounts | Every link of a member of the connector's Discord server ([below](#linked-accounts)) |
+| `POST /voice` | Move players in voice | Move players between a queue's voice channels ([below](#voice-moves)) |
 
 Answers are JSON. Refused requests have `"ok": false` and an `error` message:
 
@@ -33,6 +34,46 @@ Answers are JSON. Refused requests have `"ok": false` and an `error` message:
 
 Don't send a `4xx` request again unchanged (except `429`). Do retry when FragQ couldn't be reached or
 answered `5xx`, with the same `match_uid`, so the result is posted once.
+
+## Voice moves
+
+`POST /voice` moves players between the Discord voice channels of one of the connector's queues, which needs
+[voice moves](../administration/voice.md) turned on for that queue. Send each team's players by SteamID64,
+and the players who should go back to the lobby. Up to 64 players and two teams per request:
+
+```json
+{
+  "teams": {"red": ["76561198000000001", "76561198000000002"], "blue": ["76561198000000003"]},
+  "lobby": [],
+  "queue": "CA"
+}
+```
+
+`queue` is optional. Without it, FragQ uses the queue of the FragQ match these players are in, or the
+connector's only queue with voice moves on. Team names can be anything; FragQ
+[matches them to the team channels](../administration/voice.md#game-servers) and keeps that choice for the
+rest of the match. FragQ only moves members who are already in the queue's Lobby or team channels.
+
+```json
+{
+  "ok": true,
+  "queue": "CA",
+  "match_id": 9024,
+  "teams": {"red": "🔴 Red Team", "blue": "🔵 Blue Team"},
+  "players": [
+    {"steam_id": "76561198000000001", "discord_name": "username", "status": "moved", "channel": "🔴 Red Team", "fragdex": false},
+    {"steam_id": "76561198000000002", "discord_name": null, "status": "not_linked", "channel": "🔴 Red Team", "fragdex": false}
+  ]
+}
+```
+
+`status` is one of `moved`, `already_there`, `not_in_voice`, `other_channel`, `not_linked`, `not_member`,
+`no_permission` or `failed` (see [Voice moves](../administration/voice.md#when-nobody-moves)). The answer is
+`409` when none of the connector's queues has voice moves on.
+
+Each player also has `"fragdex": true` when FragQ found them with a
+[Fragdex lookup](../administration/settings-page.md#fragdex) rather than a FragQ link, and `false` otherwise.
+`POST /players/linked` answers the same way, next to `linked`, `member`, `discord_name` and `confirming`.
 
 ## Linked accounts
 

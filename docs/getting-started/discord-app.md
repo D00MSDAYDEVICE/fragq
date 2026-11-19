@@ -40,8 +40,29 @@ plus your own user id, and the installer asks for all four.
     slash. The installer prints the exact line to add when it finishes. If you skip this step, the
     login fails with *Invalid OAuth2 redirect_uri*.
 
-You don't need to build an invite link here. Once FragQ is running, the web panel has an
-**Invite bot** link with the right permissions.
+## Installation tab
+
+You don't need to build an invite link. Once FragQ is running, the web panel's **Invite bot** link
+asks for the right scopes and permissions itself, whatever this tab says. Check two things:
+
+1. Under **Installation Contexts**, keep **Guild Install** ticked, or Discord refuses to add the bot
+   to a server. **User Install** isn't used and can be unticked.
+2. Under **Install Link**, choose **None** unless you want Discord's own **Add App** button on the
+   bot's profile. If you do, choose **Discord Provided Link** and set **Default Install Settings →
+   Guild Install** to match the panel's link:
+
+    | Setting | Value |
+    |---|---|
+    | Scopes | `bot`, `applications.commands` |
+    | Permissions | Manage Channels, Manage Roles, View Channels, Send Messages, Manage Messages, Embed Links, Attach Files, Read Message History, Add Reactions, Connect, Move Members |
+
+    Add **Manage Nicknames** if you'll use *Set ratings to nicks*. [Invite the bot](first-steps.md#2-invite-the-bot)
+    says what each permission is for.
+
+!!! tip "Who can invite the bot"
+    **Public Bot** on the **Bot** tab lets anyone with the link add your bot to their server. Turn it
+    off to keep the bot to servers you add it to yourself. Leave **Requires OAuth2 Code Grant** off:
+    with it on, the invite fails.
 
 ## Your user id
 

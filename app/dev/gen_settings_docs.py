@@ -15,7 +15,8 @@ DOCS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "doc
 
 TYPES = {
 	"str": "text", "text": "multi-line text", "option": "choice", "bool": "on / off", "int": "number",
-	"slider": "percent", "role": "role", "member": "member", "channel": "channel", "duration": "duration",
+	"slider": "percent", "role": "role", "member": "member", "channel": "channel", "voice": "voice channel",
+	"duration": "duration",
 	"emoji": "emoji", "table": "table",
 }
 

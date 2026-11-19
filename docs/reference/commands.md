@@ -69,7 +69,7 @@ Joining is refused while the channel is [paused](../queue-panel/moderators.md#pa
 | | `/queue start` | Mod | Start a queue that isn't full |
 | | `/queue split` | Mod | Split a queue into several matches |
 | `!cancel_match <id>` | | Mod | Cancel a match in progress |
-| | `/match report` | Mod | Report a match result as a moderator |
+| `!report_win <id> <team>`, `!rw` | `/match report` | Mod | Report a match's winner, or `draw`, as a moderator |
 | | `/match create` | Mod | Record a rated match by hand |
 | | `/match sub_player` | Mod | Swap a player in a match |
 | | `/match put` | Mod | Put a player in a team |

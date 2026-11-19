@@ -153,7 +153,10 @@ class Config:
 		cfg_data = json.loads(row['cfg_data'])
 		for var in self._factory.variables.values():
 			try:
-				obj = await var.wrap(cfg_data.get(var.name, var.default), guild)
+				value = cfg_data.get(var.name)
+				if value is None and (var.name not in cfg_data or var.notnull):
+					value = var.default  # missing, or empty where it can't be: the default
+				obj = await var.wrap(value, guild)
 			except Exception as e:
 				log.error("Failed to wrap variable '{}': {}".format(var.name, str(e)))
 				obj = await var.wrap(var.default, guild)
@@ -280,6 +283,8 @@ class BoolVar(Variable):
 		# 0 == False and 1 == True in python
 		value = string.lower()
 		if value in ['none', 'null']:
+			if self.notnull and self.default is not None:
+				return self.default  # an export or backup with an empty on/off switch takes the default
 			if self.notnull:
 				raise ValueError(f"{self.name} can't be null.")
 			return None
@@ -470,6 +475,22 @@ class TextChanVar(Variable):
 		return None
 
 
+class VoiceChanVar(TextChanVar):
+	""" A voice channel: a mention, an id or a name (with or without #). """
+
+	async def validate(self, string, guild):
+		if not string or string.lower() in ['none', 'null']:
+			if self.notnull:
+				raise ValueError(f"{self.name} can't be null.")
+			return None
+		mention = re.match("^<#([0-9]+)>$", string)
+		key = mention.group(1) if mention else string.lstrip('#')
+		channel = next((c for c in guild.voice_channels if str(c.id) == key or c.name == key), None)
+		if channel is None:
+			raise ValueError("Voice channel '{}' not found on the guild.".format(string))
+		return channel.id
+
+
 class DurationVar(Variable):
 	def __init__(self, name, **kwargs):
 		super().__init__(name, **kwargs)
@@ -556,6 +577,7 @@ class Variables:
 	SliderVar = SliderVar
 	RoleVar = RoleVar
 	TextChanVar = TextChanVar
+	VoiceChanVar = VoiceChanVar
 	DurationVar = DurationVar
 	VariableTable = VariableTable
 

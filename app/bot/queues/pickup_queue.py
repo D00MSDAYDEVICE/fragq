@@ -13,7 +13,7 @@ class PickupQueue:
 	cfg_factory = CfgFactory(
 		table=FactoryTable(name="pq_configs", p_key="pq_id", f_key="channel_id"),
 		name="pq_config",
-		sections=["General", "Teams", "Appearance", "Maps"],
+		sections=["General", "Teams", "Appearance", "Maps", "Voice"],
 		icon='pq.png',
 		variables=[
 			Variables.StrVar(
@@ -268,6 +268,43 @@ class PickupQueue:
 				variables=[
 					Variables.StrVar("name", notnull=True)
 				]
+			),
+			Variables.BoolVar(
+				"voice_moves",
+				display="Move players in voice",
+				section="Voice",
+				default=0,
+				notnull=True,
+				description="When a match starts, move its players from the Lobby voice channel into their team's channel. "
+							"Only players who are in the Lobby are moved. Needs the three voice channels below, and the bot "
+							"needs Move Members and Connect on them."
+			),
+			Variables.VoiceChanVar(
+				"voice_lobby",
+				display="Lobby voice channel",
+				section="Voice",
+				description="Where players wait for a match. Players in any other voice channel, or not in voice, are never moved."
+			),
+			Variables.VoiceChanVar(
+				"voice_team1",
+				display="First team's voice channel",
+				section="Voice",
+				description="For the first team in the match message. A game server's teams go to the channel with their "
+							"name in it (red to a channel named Red...), otherwise to where their players already are."
+			),
+			Variables.VoiceChanVar(
+				"voice_team2",
+				display="Second team's voice channel",
+				section="Voice",
+				description="For the second team in the match message."
+			),
+			Variables.BoolVar(
+				"voice_return",
+				display="Back to the lobby after the match",
+				section="Voice",
+				default=1,
+				notnull=True,
+				description="When the match is reported or canceled, move its players from the team channels back to the Lobby."
 			)
 		]
 	)

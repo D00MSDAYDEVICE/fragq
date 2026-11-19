@@ -82,7 +82,7 @@ Unranked matches are finished as soon as they start. On **ranked** queues (which
 | `!report_draw` / `!rd` / `/report draw` | Offer a draw; the other captain confirms with the same command |
 | `!report_cancel` / `!rc` / `/report abort` | Offer to cancel; the other captain confirms |
 
-Moderators can report any result with `/match report`, cancel a match with `!cancel_match`, and undo a
+Moderators can report any result with `!rw <match id> <team>` (or `draw`) or `/match report`, cancel a match with `!cancel_match`, and undo a
 finished match with `/stats undo_match`. A ranked match that is never reported times out after the
 queue's **Match lifetime** (3 hours by default).
 

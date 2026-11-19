@@ -22,6 +22,8 @@ from . import steam
 from . import avatars
 from . import panel
 from . import connectors
+from . import voice
+from . import fragdex
 
 bot_was_ready = False
 bot_ready = False

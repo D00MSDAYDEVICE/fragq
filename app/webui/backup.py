@@ -57,7 +57,7 @@ def build(include_steam_key=False):
 		guild_id=str(c["guild_id"]), name=c["name"], game=c["game"],
 		queues=[queue_ref[q] for q in c["queues"] if q in queue_ref],
 		unmatched_queue=queue_ref.get(c["unmatched_queue"]),
-		**{k: c[k] for k in ("prefix", "key_hash", "can_results", "can_check", "can_link", "can_export", "allowed_ips", "rate_limit",
+		**{k: c[k] for k in ("prefix", "key_hash", "can_results", "can_check", "can_link", "can_export", "can_voice", "allowed_ips", "rate_limit",
 							 "expires_at", "disabled", "created_by_name", "created_at")},
 		created_by=str(c.get("created_by") or ""),
 	) for c in bot.connectors.connectors.values()]
@@ -111,7 +111,12 @@ async def restore(data, parts, dry_run=False, who="?"):
 	if "settings" in parts:
 		allowed = bot.settings.BACKUP + bot.settings.LEGACY + ("steam_api_key",)
 		values = {k: v for k, v in (data.get("settings") or {}).items() if k in allowed}
+		if "fragdex_url" in values and not isinstance(values["fragdex_url"], str):
+			del values["fragdex_url"]
 		if not dry_run:
+			if values.get("fragdex_url", bot.fragdex.url()) != bot.fragdex.url():
+				await bot.settings.put("fragdex_lookup", False)   # another Fragdex: test it and turn lookups on again
+				bot.fragdex.forget()
 			for k, v in values.items():
 				await bot.settings.put(k, v)
 		report["settings"] = dict(restored=sorted(values), steam_key="steam_api_key" in values, notes=[])
@@ -229,7 +234,7 @@ async def restore(data, parts, dry_run=False, who="?"):
 			lost = len(x.get("queues") or []) - len(queues)
 			if dry_run and "channels" in parts and lost:
 				lost = 0  # the queues may be created by the channel part of this restore
-			export_only = x.get("can_export") and not (x.get("can_results") or x.get("can_check") or x.get("can_link"))
+			export_only = x.get("can_export") and not (x.get("can_results") or x.get("can_check") or x.get("can_link") or x.get("can_voice"))
 			if not queues and not export_only and not (dry_run and "channels" in parts):
 				r["missing"] += 1
 				r["notes"].append(f"Connector '{name}': none of its queues exist here, skipped. Restore the channels and queues first.")

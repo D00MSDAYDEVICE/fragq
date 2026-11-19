@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.3.0 (2026-11-19)
+
+- **Voice moves (off by default):** each queue can name a Lobby and two team voice channels. When a match
+  starts, players in the Lobby are moved into their team's channel, and back to the Lobby when it is reported
+  or canceled. Nobody outside those channels is ever moved. Set it up under the queue's **Settings → Voice**.
+  The invite link now asks for View Channels, Connect and Move Members; a bot invited earlier needs them added.
+- **Move players in voice:** a new connector permission, off by default, for `POST /voice`. Game servers can
+  move players for substitutes and team changes. Game teams go to the channel with their name in it (red to
+  red), otherwise to where their players already are, otherwise at random.
+- **Quake Live plugin 1.1.0:** `qlx_fragqVoice 1` sends the teams at match start and after team changes, and
+  the lobby at match end.
+- **`!rw` works:** `!rw <match id> <team>` or `!rw <match id> draw` reports a match as a moderator, like
+  `/match report`. PUBobot2 documented it but never had the command.
+- **Fragdex lookups (off by default):** the Settings page can connect to a Fragdex server with a Fragdex API key,
+  with **Save** and **Test** buttons. Once the connection passes a test, **Lookup unknown IDs using Fragdex** can be
+  turned on. Game servers' Steam IDs that nobody linked in FragQ are then looked up in Fragdex: posted results show
+  those players' Discord names, and the linked-player check and voice moves find them. These are never saved as
+  FragQ links, never count as verified and never affect ratings.
+- **On/off switches show their state:** a setting that was off lit both OFF and ON. Now OFF is red when off and ON
+  is green when on. The voice switches have a single OFF/ON choice like the other queue switches.
+
 ## 1.2.0 (2026-11-11)
 
 - **Duplicate channels and queues:** **Duplicate** at the top of a channel's or queue's **⋯** menu. A queue

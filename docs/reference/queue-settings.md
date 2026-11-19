@@ -64,3 +64,13 @@ Other names for this queue, you can also group queues by giving them a same alia
 
 **Maps** (`maps`) is a table with the columns `name`.
 List of maps to choose from.
+
+## Voice
+
+| Setting | Variable | Type | Default | Description |
+|---|---|---|---|---|
+| Move players in voice | `voice_moves` | on / off | `off` | When a match starts, move its players from the Lobby voice channel into their team's channel. Only players who are in the Lobby are moved. Needs the three voice channels below, and the bot needs Move Members and Connect on them. |
+| Lobby voice channel | `voice_lobby` | voice channel | not set | Where players wait for a match. Players in any other voice channel, or not in voice, are never moved. |
+| First team's voice channel | `voice_team1` | voice channel | not set | For the first team in the match message. A game server's teams go to the channel with their name in it (red to a channel named Red...), otherwise to where their players already are. |
+| Second team's voice channel | `voice_team2` | voice channel | not set | For the second team in the match message. |
+| Back to the lobby after the match | `voice_return` | on / off | `on` | When the match is reported or canceled, move its players from the team channels back to the Lobby. |
