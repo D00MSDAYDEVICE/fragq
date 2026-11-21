@@ -40,9 +40,10 @@ class FragdexError(Exception):
 
 
 def api_base(url):
-	""" The API address from what the owner typed: the site, or its API base URL (…/api/v1). """
+	""" The API address from what the owner typed: the site, its API base URL (…/api/v1), or any address from /api
+	on (…/api, a pasted …/api/v1/status): the API is always <site>/api/v1. """
 	url = (url or "").strip().rstrip("/")
-	return url if url.endswith("/api/v1") else url + "/api/v1"
+	return re.sub(r"/api(/.*)?\Z", "", url, flags=re.IGNORECASE) + "/api/v1"
 
 
 def _sig(url, key):
@@ -82,8 +83,9 @@ async def _request(base, api_key, method, path, body=None, timeout=TIMEOUT):
 					msg = data.get("error") if isinstance(data, dict) and data.get("error") else f"HTTP {resp.status}"
 					if resp.status == 401:
 						msg = "Fragdex refused the API key."
-					elif resp.status == 404 and not isinstance(data, dict):
-						msg = "No Fragdex API at this address (HTTP 404). Use the Base URL from Fragdex's Settings → Fragdex API."
+					elif resp.status == 404 and not (isinstance(data, dict) and data.get("error")):
+						msg = (f"No Fragdex API at {base + path} (HTTP 404). Use the Base URL from Fragdex's "
+						       "Settings → Fragdex API, or the site's address alone.")
 					raise FragdexError(msg)
 				if not isinstance(data, dict):
 					raise FragdexError("The answer isn't from a Fragdex API. Check the address.")

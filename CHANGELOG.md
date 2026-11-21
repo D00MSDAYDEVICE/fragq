@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.3 (2026-11-21)
+
+- **Fragdex settings: Test no longer empties the form.** After a successful **Test** of settings that weren't saved
+  yet, the address and key stayed in the fields, so **Save** saves what was tested instead of asking for both again.
+- **Fragdex address with a path:** an address with `/api...` in it (such as `.../api` or a pasted `.../api/v1/status`)
+  had `/api/v1` added a second time and failed with *HTTP 404*. FragQ now uses the site's address plus `/api/v1`.
+  A 404 now names the address FragQ tried.
+
 ## 1.3.2 (2026-11-21)
 
 - **Quake Live plugin 1.2.1: addresses with a path.** `!fragq url` and `qlx_fragqUrl` given an address with `/api...` in it

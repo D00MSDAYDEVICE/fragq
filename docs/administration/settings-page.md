@@ -39,9 +39,10 @@ Steam ID that nobody linked in FragQ. It is a convenience for game servers, and 
    `https://fragdex.example.com/api/v1`) and create a key for FragQ. It only needs to read players, so leave
    **See IP addresses**, **See notes**, **Add records** and **Game server** off. If FragQ always connects from
    the same address, put it in the key's **Allowed IPs**.
-2. On FragQ's Settings page, enter the **Base URL** and the **API key** in the **Fragdex** panel.
+2. On FragQ's Settings page, enter the **Base URL** and the **API key** in the **Fragdex** panel. The Fragdex
+   site's address alone (`https://fragdex.example.com`) works too.
 3. Press **Save**. FragQ saves both and tests them. **Test** checks what's in the boxes without saving it
-   (empty boxes test the saved settings).
+   (empty boxes test the saved settings). After a passing test, press **Save** to keep what you tested.
 4. Once the test passes, the panel shows **Connected** and **Lookup unknown IDs using Fragdex** can be used.
    It starts at **OFF** (red). Press **ON** (green) to turn lookups on.
 

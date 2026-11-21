@@ -1066,6 +1066,7 @@
       busy(true);
       api("POST", "/api/settings/fragdex/test", f).then(function (r) {
         fd = r.settings.fragdex; draw(); err.show(null);
+        if (!r.saved) { urlInput.value = f.url || fd.url || ""; keyInput.value = f.api_key; }   // keep what was typed for Save
         toast("Fragdex " + r.version + " answered" + (r.key_name ? " to the key '" + r.key_name + "'" : "") + "." + (r.saved ? "" : " Press Save to keep these settings."));
       }).catch(function (e) { err.show(e.message); }).then(function () { busy(false); });
     }
