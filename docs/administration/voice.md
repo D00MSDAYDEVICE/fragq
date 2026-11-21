@@ -50,7 +50,13 @@ request is described in the [result format](../connectors/result-format.md#voice
 game server can [move players by hand](../connectors/quake-live.md#moving-players-by-hand) with `!voice`, for
 teams arranged in the game.
 
-Games name their teams their own way. FragQ decides which game team goes to which channel like this:
+Each request is for one queue, and only ever one of the connector's own queues: the queue the game server
+names, else the queue of the FragQ match its players are in, else the connector's only queue with voice moves
+on. If none of these decides it, FragQ refuses the request and moves nobody. Giving each game server
+[its own connector](../connectors/index.md#create-a-connector) avoids the question.
+
+Games name their teams their own way. FragQ decides which game team goes to which of that queue's channels like
+this:
 
 1. **By name:** a game team goes to the team channel that has its name in it, so `red` goes to *🔴 Red
    Team* and `blue` to *Blue side*.

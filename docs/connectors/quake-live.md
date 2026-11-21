@@ -62,6 +62,30 @@ The red team goes to the team channel with *red* in its name and blue to the one
 channel names, see [how FragQ decides](../administration/voice.md#game-servers). Only team modes (CA, TDM,
 CTF and so on) send teams. `!fragq` shows the result of the last request.
 
+### Several servers and queues
+
+FragQ only moves players between the voice channels of one of the **key's** queues, so *blue* always means
+the blue channel of that queue. Which queue:
+
+1. the queue typed after `!voice`, such as `!voice 5 blue ca`;
+2. else `qlx_fragqQueue`, the queue this server plays;
+3. else the queue of the FragQ match the players are in;
+4. else the key's only queue with voice moves on.
+
+If none of these decides it, FragQ refuses and the reply says why; nobody is moved. Queue names are not
+case-sensitive. Players are only moved if they are already in that queue's Lobby or team channels, so someone
+in another queue's channels is never pulled across.
+
+The simplest setup is one connector per server, with only the queues that server plays. If servers share a key
+that has several queues, set each server's queue:
+
+```text
+set qlx_fragqQueue "CA"
+```
+
+`qlx_fragqQueue` is sent with match results too, so FragQ only looks for the match in that queue. `!fragq test`
+warns when the key has no queue of that name, or two of them (in different channels).
+
 ### Moving players by hand
 
 For teams arranged in the game rather than picked in Discord, admins can tell FragQ to move players with
@@ -74,7 +98,8 @@ in voice**.
 | `!voice lobby` | Moves everyone in a team channel back to the lobby |
 | `!voice <player id> red` / `blue` / `lobby` | Moves one player (player ids are shown by `/players`) |
 
-Add a queue name at the end, such as `!voice teams CA`, when the key has several queues with voice moves on.
+Add a queue name at the end, such as `!voice teams CA` (any case), to choose the queue; without one, the
+plugin uses `qlx_fragqQueue` (see [Several servers and queues](#several-servers-and-queues)).
 The same rules apply as for automatic moves: only players already in the queue's lobby or team channels are
 moved. The reply says how many moved and why the others didn't, such as *3 of 4 moved: 1 not linked*. There
 are 5 seconds between `!voice` commands. Who may use it is set with `qlx_voicemoveperm` (permission level 4 by
@@ -173,7 +198,7 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!link <player id> <discord id>` | `qlx_fragqAdminLevel` | Link another player's account |
 | `!linkenforce [on\|off]` | `qlx_fragqAdminLevel` | Require linked Steam accounts to play |
 | `!setdiscord <invite URL>` | `qlx_fragqAdminLevel` | The Discord invite shown to players; `off` removes it |
-| `!voice teams` / `lobby` / `<player id> red\|blue\|lobby` | `qlx_voicemoveperm` | [Move players in voice](#moving-players-by-hand) now |
+| `!voice teams` / `lobby` / `<player id> red\|blue\|lobby` `[queue]` | `qlx_voicemoveperm` | [Move players in voice](#moving-players-by-hand) now |
 | `!fragq` | `qlx_fragqAdminLevel` | Status: address, key, last result sent |
 | `!fragq url <address>` | 5 | Set the FragQ address |
 | `!fragq key <key>` | 5, console / rcon only | Set the connector key |
@@ -195,6 +220,7 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `qlx_fragqVerifyTls` | `1` | `0` = accept a self-signed certificate |
 | `qlx_fragqVoice` | `0` | `1` = move players between the queue's Discord voice channels ([voice moves](#voice-moves)) |
 | `qlx_voicemoveperm` | `4` | Permission level for [`!voice`](#moving-players-by-hand) |
+| `qlx_fragqQueue` | | The FragQ queue this server plays, in any case. Sent with voice moves and results ([several servers and queues](#several-servers-and-queues)) |
 
 ## Troubleshooting
 
@@ -203,6 +229,8 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!fragq test`: *HTTP 401: Invalid connector key* | The key is wrong or was replaced. Set it again with `!fragq key`. |
 | *HTTP 403: … can't be used from …* | The server's address isn't in the connector's **Allowed IPs**. The message shows the address FragQ saw. |
 | *HTTP 401: Not logged in* or *HTTP 404: Wrong address* | The address has a path after the panel's address, such as `https://fragq.example.com/api`. Set it to the panel's address alone with `!fragq url https://fragq.example.com`. Plugin 1.2.1 and later remove the extra path themselves. |
+| *Several of this connector's queues have voice moves on…* | Set `qlx_fragqQueue`, or add the queue's name after `!voice`. |
+| *This connector has 2 queues named …* | Two of the key's queues, in different channels, have the same name. Give each server its own connector, or rename one. |
 | *certificate verify failed* | Set `qlx_fragqVerifyTls 0` for a self-signed certificate. |
 | Results are never sent | `zmq_stats_enable 1` is missing (needed on minqlx and minqlxtended). Check `!fragq` for the last result's status. |
 | Results post without a match number | Fewer than half the match's players have linked Steam accounts, or the match is older than 6 hours, or the queue isn't one of the connector's queues. |

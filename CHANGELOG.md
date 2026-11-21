@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.4 (2026-11-21)
+
+- **Quake Live plugin 1.3.0: `qlx_fragqQueue`.** Names the FragQ queue a server plays. It is sent with every voice
+  request and match result, so servers that share a key with several queues always move players between their own
+  queue's channels, and results are only matched to that queue. A queue typed after `!voice` takes precedence.
+  `!fragq` shows it and `!fragq test` warns when the key has no queue of that name.
+- **Queue names in any case, never ambiguous:** voice requests and results match queue names regardless of case
+  (`!voice 5 blue ca`). A name two of the key's queues share, in different channels, is refused instead of
+  picking one, and an unknown name lists the key's queues.
+- **Docs:** one connector per game server, and how FragQ picks the queue for a voice move.
+
 ## 1.3.3 (2026-11-21)
 
 - **Fragdex settings: Test no longer empties the form.** After a successful **Test** of settings that weren't saved

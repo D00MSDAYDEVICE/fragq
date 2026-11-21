@@ -49,8 +49,10 @@ and the players who should go back to the lobby. Up to 64 players and two teams 
 }
 ```
 
-`queue` is optional. Without it, FragQ uses the queue of the FragQ match these players are in, or the
-connector's only queue with voice moves on. Team names can be anything; FragQ
+`queue` is optional, and not case-sensitive (`ca` finds *CA*). Without it, FragQ uses the queue of the FragQ
+match these players are in, or the connector's only queue with voice moves on; if several of the connector's
+queues have voice moves on and no match is found, the answer is `400` and nobody is moved. A name that none of
+the connector's queues has, or that two of them share (in different channels), is also refused with `400`. Team names can be anything; FragQ
 [matches them to the team channels](../administration/voice.md#game-servers) and keeps that choice for the
 rest of the match. FragQ only moves members who are already in the queue's Lobby or team channels.
 
@@ -137,7 +139,7 @@ Only `players` is required. Everything else is optional; leave out what your gam
 | `title` | text | Title for results that don't belong to a FragQ match (default *Match results*) |
 | `map`, `mode`, `server` | text | Shown under the score |
 | `duration` | seconds | Match length, shown as `10:12` |
-| `queue` | text | A queue name: only look for the FragQ match in this one of the connector's queues |
+| `queue` | text | A queue name, in any case: only look for the FragQ match in this one of the connector's queues |
 | `fragq_match_id` | number | The FragQ match number, if your tool knows it. Skips the matching by players. |
 | `teams` | up to 4 `{name, score}` | Teams and scores. With two scored teams, the score is shown as *Red 8 – 5 Blue*. |
 | `winner` | text or `null` | The winning team's name; `null` with equal scores shows *Draw* |

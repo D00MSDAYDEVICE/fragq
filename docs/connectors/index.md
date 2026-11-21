@@ -53,6 +53,13 @@ or be a server admin.
 4. Press **Create connector**. The page shows the **key** once, with a `curl` command to test it.
    Copy it now: FragQ only keeps a hash of it.
 
+!!! tip "One connector per game server"
+    Give each game server its own connector, with only the queues it plays. FragQ then always knows which
+    queue a server's results and [voice moves](../administration/voice.md#game-servers) are for. A key shared by
+    servers that play different queues makes FragQ work the queue out from the players, and refuse voice moves
+    it can't place. Quake Live servers can also name their queue with
+    [`qlx_fragqQueue`](quake-live.md#several-servers-and-queues).
+
 Give the game server the **Connector API address** shown at the top of the page, and the key.
 
 ## Connect Fragdex
@@ -105,7 +112,7 @@ If no match qualifies, the result goes where **Results without a FragQ match** s
     [`!link`](quake-live.md#link).
 
 A tool that knows the FragQ match number can send it as `fragq_match_id`, and FragQ uses that match
-instead. A game server sending the same result twice (with the same `match_uid`) gets it posted
+instead. A tool that sends a `queue` name only has matches of that queue considered. A game server sending the same result twice (with the same `match_uid`) gets it posted
 once.
 
 ## Linking Steam accounts from the game

@@ -597,7 +597,7 @@ async def find_match(c, result):
 	""" The FragQ match a result belongs to, or None: most of its players must be in the game's result. """
 	queue_ids = set(c["queues"])
 	if result.get("queue"):
-		named = {q.id for q, _ in queue_objects(c) if q.name.lower() == result["queue"].lower()}
+		named = {q.id for q, _ in queue_objects(c) if q.name.casefold() == result["queue"].strip().casefold()}
 		queue_ids = named or queue_ids
 	cands = await _recent(c, queue_ids)
 	if result.get("fragq_match_id"):

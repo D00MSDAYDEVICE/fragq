@@ -193,9 +193,14 @@ async def _queue_for(c, steam_ids, data):
 	if name is not None:
 		if not isinstance(name, str):
 			raise ConnectorError(400, "'queue' must be a queue name.")
-		found = next(((q, qc) for q, qc in queues if q.name.lower() == name.lower()), None)
-		if found is None:
-			raise ConnectorError(400, f"This connector has no queue named '{name[:60]}'.")
+		named = [(q, qc) for q, qc in queues if q.name.casefold() == name.strip().casefold()]   # any case
+		if not named:
+			raise ConnectorError(400, f"This connector has no queue named '{name[:60]}'. Its queues: "
+									  f"{', '.join(q.name for q, _ in queues) or 'none'}.")
+		if len(named) > 1:
+			raise ConnectorError(400, f"This connector has {len(named)} queues named '{named[0][0].name}', in different "
+									  "channels. Give each server its own connector, or rename one of the queues.")
+		found = named[0]
 		if not enabled(found[0]):
 			raise ConnectorError(409, f"Voice moves aren't turned on for the queue {found[0].name}.")
 	else:
