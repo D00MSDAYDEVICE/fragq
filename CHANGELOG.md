@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.2 (2026-11-21)
+
+- **Quake Live plugin 1.2.1: addresses with a path.** `!fragq url` and `qlx_fragqUrl` given an address with `/api...` in it
+  (such as `https://fragq.example.com/api` or a pasted `.../api/connect/v1/status`) added the connector path a second
+  time, and every request failed with *HTTP 401: Not logged in*. The extra path is now removed, also from an address
+  saved earlier.
+- **Clearer error for a wrong connector address:** a connector key sent to a web panel path outside the connector API
+  now gets *HTTP 404: Wrong address* naming the path, instead of *Not logged in*.
+
 ## 1.3.1 (2026-11-19)
 
 - **Quake Live plugin 1.2.0: `!voice`.** Admins move players by hand, for teams arranged in the game:

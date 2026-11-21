@@ -202,6 +202,7 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 |---|---|
 | `!fragq test`: *HTTP 401: Invalid connector key* | The key is wrong or was replaced. Set it again with `!fragq key`. |
 | *HTTP 403: … can't be used from …* | The server's address isn't in the connector's **Allowed IPs**. The message shows the address FragQ saw. |
+| *HTTP 401: Not logged in* or *HTTP 404: Wrong address* | The address has a path after the panel's address, such as `https://fragq.example.com/api`. Set it to the panel's address alone with `!fragq url https://fragq.example.com`. Plugin 1.2.1 and later remove the extra path themselves. |
 | *certificate verify failed* | Set `qlx_fragqVerifyTls 0` for a self-signed certificate. |
 | Results are never sent | `zmq_stats_enable 1` is missing (needed on minqlx and minqlxtended). Check `!fragq` for the last result's status. |
 | Results post without a match number | Fewer than half the match's players have linked Steam accounts, or the match is older than 6 hours, or the queue isn't one of the connector's queues. |

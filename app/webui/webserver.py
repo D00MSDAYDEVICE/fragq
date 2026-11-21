@@ -174,6 +174,10 @@ async def middleware(request, handler):
 	elif path.startswith("/api/"):
 		user = auth.get_user(request)
 		if user is None:
+			if request.headers.get("Authorization", "").startswith("Bearer fq_"):
+				# a connector key sent outside the connector API: its address has an extra path in it
+				return jerror(404, f"Wrong address: {path} is not part of the connector API. Set the address to the "
+				                   "web panel's address alone, such as https://fragq.example.com.")
 			return jerror(401, "Not logged in.")
 		request["user"] = user
 		if request.method not in ("GET", "HEAD", "OPTIONS"):
