@@ -77,6 +77,9 @@ def build(qc):
 		n, size = len(q.queue), q.cfg.size
 		title = f"{q.name} · {n}/{size}" + (" · ⭐ ranked" if q.cfg.ranked else "")
 		players = " · ".join(f"`{get_nick(m)}`" for m in q.queue) or "*" + qc.gt("waiting for players") + "*"
+		if bot.series.of(q):
+			title = f"🔒 {q.name} · " + qc.gt("held") + (" · ⭐ ranked" if q.cfg.ranked else "")
+			players = "*" + bot.series.text(q) + "*"
 		value = f"`{_bar(n, size)}`\n{players}"
 		embed.add_field(name=title, value=value[:1024], inline=False)
 
@@ -100,7 +103,7 @@ def build(qc):
 	view = View(timeout=None, auto_defer=False)
 	joins = []
 	for q in queues:
-		closed = paused or len(q.queue) >= q.cfg.size
+		closed = paused or len(q.queue) >= q.cfg.size or bool(bot.series.of(q))
 		joins.append(Button(
 			style=ButtonStyle.secondary if closed else ButtonStyle.success,
 			label=(qc.gt("Join") + " " + q.name)[:80] if len(queues) > 1 else qc.gt("Join"),
@@ -132,7 +135,7 @@ def build(qc):
 def _signature(qc):
 	return (
 		qc.cfg.prefix, qc.paused, qc.cfg.panel_mod_buttons, bot.avatars.signature(qc),
-		tuple((q.id, q.name, q.cfg.size, q.cfg.ranked, tuple(m.id for m in q.queue)) for q in qc.queues),
+		tuple((q.id, q.name, q.cfg.size, q.cfg.ranked, tuple(m.id for m in q.queue), str(bot.series.of(q))) for q in qc.queues),
 		tuple((m.id, m.state, int((time.time() - m.start_time) // 60)) for m in bot.active_matches if m.qc is qc),
 	)
 
@@ -453,6 +456,7 @@ async def _mod_users(ctx, qid):
 				bot.Qr.Duplicate: qc.gt("already in queue"),
 				bot.Qr.QueueFull: qc.gt("queue full"),
 				bot.Qr.NotAllowed: qc.gt("not allowed by queue roles"),
+				bot.Qr.Held: qc.gt("queue held by a series"),
 			}.get(resp, resp.__name__)))
 
 	lines = []

@@ -23,7 +23,7 @@ docker compose up -d
 | `DISCORD_INVITE_LINK` | built from the client id | Override the **Invite bot** link |
 | `BOT_STATUS` | `pickup games` | Shown as the bot's *Watching …* status |
 | `BOT_HELP` | a short text with the web panel address | What the bot answers to direct messages |
-| `COMMANDS_URL` | the [Commands](../reference/commands.md) page of this documentation | Where the **Commands** link in the web panel and `/commands` point |
+| `COMMANDS_URL` | the [Commands](../reference/commands.md) page of this documentation | Where `/commands` points. The web panel's **Documentation** link goes to the documentation's home page. |
 
 ## Web panel and HTTPS
 

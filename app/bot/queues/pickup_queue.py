@@ -224,6 +224,34 @@ class PickupQueue:
 				section="General",
 				description="Set a custom match life time before it times out then ranked is enabled. Default: 3 hours."
 			),
+			Variables.DurationVar(
+				"hold_time",
+				display="Hold players after start",
+				verify=lambda i: 0 <= i < 86401,
+				verify_message="Must be not bigger than 24 hours.",
+				section="General",
+				description="\n".join([
+					"Unranked queues only: keep an unranked match in progress for this long after it starts, so its players "
+					"can't add again while they play.",
+					"It ends earlier when the game server posts the match's result, a player of the match types /report, "
+					"or a moderator reports or cancels it. Empty or 0: off, the match ends as soon as it starts."
+				])
+			),
+			Variables.IntVar(
+				"series_length",
+				display="Series length",
+				section="General",
+				default=1,
+				notnull=True,
+				verify=lambda n: 1 <= n <= 25,
+				verify_message="Series length must be between 1 and 25 games.",
+				description="\n".join([
+					"Games one pickup plays on the game server before the queue opens again. 1: off.",
+					"While a series is on, nobody can add to the queue. Each result the game server posts for the match "
+					"counts one game; the series ends with the last one, /endseries, the match being canceled, or no "
+					"result for the match lifetime. Unranked matches stay in progress until the series ends."
+				])
+			),
 			Variables.IntVar(
 				"map_count",
 				display="Map count",
@@ -352,6 +380,7 @@ class PickupQueue:
 		self.id = self.cfg.p_key
 		self.queue = []
 		self.last_maps = []
+		self.series = None  # dict while a series is on: bot.series
 
 	@property
 	def name(self):
@@ -379,7 +408,8 @@ class PickupQueue:
 			maps=[i['name'] for i in self.cfg.maps], vote_maps=self.cfg.vote_maps,
 			map_count=self.cfg.map_count, check_in_timeout=self.cfg.check_in_timeout,
 			check_in_discard=self.cfg.check_in_discard, check_in_discard_immediately=self.cfg.check_in_discard_immediately,
-			match_lifetime=self.cfg.match_lifetime,
+			match_lifetime=self.cfg.match_lifetime, hold_time=self.cfg.hold_time or 0,
+			series_length=bot.series.length(self),
 			start_msg=self.cfg.start_msg, server=self.cfg.server
 		)
 
@@ -422,6 +452,9 @@ class PickupQueue:
 			or self.cfg.whitelist_role and self.cfg.whitelist_role not in member.roles
 		):
 			return bot.Qr.NotAllowed
+
+		if self.series:
+			return bot.Qr.Held
 
 		if len(self.queue) >= self.cfg.size:
 			return bot.Qr.QueueFull

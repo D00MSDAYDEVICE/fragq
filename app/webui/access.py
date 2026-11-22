@@ -42,7 +42,7 @@ db.ensure_table(dict(
 CATALOG = [
 	("view", "Viewing", "View", "See the server, its channels and queues, the Live tab, settings (read-only) and config exports."),
 	("stats", "Viewing", "Stats", "Leaderboard and Matches tabs, player / match CSV downloads."),
-	("clear_queues", "Queue control", "Clear queues", "Remove all players from a queue."),
+	("clear_queues", "Queue control", "Clear queues", "Remove all players from a queue, or end a queue's series."),
 	("pause", "Queue control", "Pause queues", "Pause and resume a channel's queues."),
 	("panel", "Queue control", "Queue panel", "Post, move down and remove the Discord queue panel."),
 	("edit_channel", "Configuration", "Edit channel settings", "Change and reset channel settings, import channel configs."),

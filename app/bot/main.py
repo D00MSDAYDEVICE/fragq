@@ -65,7 +65,8 @@ def save_state():
 		matches.append(match.serialize())
 
 	with open(data_path("saved_state.json"), 'w') as f:
-		f.write(json.dumps(dict(queues=queues, matches=matches, allow_offline=bot.allow_offline, expire=bot.expire.serialize())))
+		f.write(json.dumps(dict(queues=queues, matches=matches, allow_offline=bot.allow_offline, expire=bot.expire.serialize(),
+								series=bot.series.serialize())))
 
 
 async def load_state():
@@ -87,6 +88,8 @@ async def load_state():
 				log.error(f"Failed to load queue state ({qd.get('queue_id')}): {str(e)}")
 		else:
 			log.error(f"Got unknown queue type '{qd.get('queue_type')}'.")
+
+	bot.series.load(data.get('series'))  # before the matches: a restored match gets a new number, its series follows
 
 	for md in data['matches']:
 		try:

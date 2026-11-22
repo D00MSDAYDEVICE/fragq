@@ -146,11 +146,11 @@ button { font: inherit; }
   .top-links a, .top-links button { padding: 0 11px; }
 }
 .top-actions { display: flex; align-items: center; gap: 10px; }
-.botpill { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 12px 0 5px; border-radius: 8px;
+.botpill { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 12px; border-radius: 8px;
            border: 1px solid var(--border-2); background: var(--panel); color: var(--text); white-space: nowrap; }
 .botpill img { width: 30px; height: 30px; border-radius: 6px; }
 .botpill .bn { font: 600 13px/1 var(--display); letter-spacing: .05em; }
-.botpill .bv { font: 500 10.5px/1 var(--mono); color: var(--muted); }
+.botpill .bv { font: 500 10.5px/1 var(--mono); color: var(--ok); }
 .botpill .st { display: flex; flex-direction: column; gap: 3px; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .live-dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }

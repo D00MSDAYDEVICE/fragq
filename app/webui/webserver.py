@@ -146,7 +146,9 @@ def member_dict(m):
 
 
 def queue_dict(q):
-	return dict(id=str(q.id), name=q.name, size=q.cfg.size, players=len(q.queue))
+	s = bot.series.of(q)
+	return dict(id=str(q.id), name=q.name, size=q.cfg.size, players=len(q.queue),
+				series=dict(match_id=s["match_id"], played=s["played"], length=s["length"], last=s["last"]) if s else None)
 
 
 def channel_dict(qc, guild, acc):
@@ -254,6 +256,7 @@ async def api_me(request):
 			version=__version__,
 			invite=cfg.DC_INVITE_LINK,
 			commands=cfg.COMMANDS_URL or "https://d00msdaydevice.github.io/fragq/reference/commands/",
+			docs="https://d00msdaydevice.github.io/fragq/",
 		),
 	))
 
@@ -598,7 +601,7 @@ async def api_guild_overview(request):
 	guild, acc = get_guild(request)
 	qcs = [qc for qc in guild_channels(guild) if acc.visible(qc.id)]
 	matches = [m for m in bot.active_matches if m.qc in qcs]
-	active = [q for qc in qcs for q in qc.queues if q.length]
+	active = [q for qc in qcs for q in qc.queues if q.length or bot.series.of(q)]
 	return web.json_response(dict(
 		channels=len(qcs),
 		queues=sum(len(qc.queues) for qc in qcs),
@@ -1141,7 +1144,7 @@ async def api_channel_live(request):
 	))
 
 
-MATCH_STATES = {0: "starting", 1: "check-in", 2: "draft", 3: "waiting report"}
+MATCH_STATES = {0: "starting", 1: "check-in", 2: "draft", 3: "waiting report"}  # a held unranked match: "in progress"
 
 
 def match_dict(m):
@@ -1149,8 +1152,9 @@ def match_dict(m):
 		id=m.id,
 		queue=m.queue.name,
 		channel=str(m.qc.id),
-		state=MATCH_STATES.get(m.state, str(m.state)),
+		state="in progress" if m.held and m.state == m.WAITING_REPORT else MATCH_STATES.get(m.state, str(m.state)),
 		ranked=bool(m.ranked),
+		held_until=m.hold_until,
 		started=m.start_time,
 		maps=list(m.maps),
 		teams=[
@@ -1312,6 +1316,15 @@ async def api_queue_clear(request):
 	return web.json_response(dict(ok=True))
 
 
+async def api_queue_end_series(request):
+	""" End the queue's series now (same as /endseries <queue>). """
+	q, qc, guild, acc = get_queue(request, "clear_queues")
+	if not bot.series.of(q):
+		raise _http(web.HTTPConflict, f"{q.name} has no series in progress.")
+	await bot.series.end(q, qc.gt("ended by {player} from the web panel").format(player=request["user"]["name"]))
+	return web.json_response(dict(ok=True))
+
+
 # ------------------------------------------------------------------ app
 
 def make_app():
@@ -1374,6 +1387,7 @@ def make_app():
 	r.add_delete("/api/channels/{channel_id}/queues/{queue_id}", api_queue_delete)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/reset/{var}", api_queue_reset)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/clear", api_queue_clear)
+	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/endseries", api_queue_end_series)
 	r.add_get("/api/channels/{channel_id}/queues/{queue_id}/export", api_queue_export)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/duplicate", api_queue_duplicate)
 

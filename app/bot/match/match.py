@@ -31,7 +31,7 @@ class Match:
 		team_size=1, pick_captains="no captains", captains_role_id=None, pick_teams="draft",
 		pick_order=None, maps=[], vote_maps=0, map_count=0, check_in_timeout=0,
 		check_in_discard=True, check_in_discard_immediately=True, match_lifetime=3*60*60, start_msg=None, server=None,
-		show_streamers=True
+		show_streamers=True, hold_time=0, series_length=1
 	)
 
 	class Team(list):
@@ -66,7 +66,7 @@ class Match:
 		match.maps = match.random_maps(match.cfg['maps'], match.cfg['map_count'], queue.last_maps)
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
 		match.init_teams(match.cfg['pick_teams'])
-		if match.ranked:
+		if match.ranked or match.held:
 			match.states.append(match.WAITING_REPORT)
 		bot.active_matches.append(match)
 
@@ -98,7 +98,8 @@ class Match:
 			maps=self.maps,
 			state=self.state,
 			states=self.states,
-			ready_players=[p.id for p in self.check_in.ready_players if p]
+			ready_players=[p.id for p in self.check_in.ready_players if p],
+			hold_until=self.hold_until
 		)
 
 	@classmethod
@@ -131,6 +132,8 @@ class Match:
 		match.maps = data['maps']
 		match.state = data['state']
 		match.states = data['states']
+		match.hold_until = data.get('hold_until')
+		bot.series.match_renumbered(queue, data['match_id'], match.id)
 		if match.state == match.CHECK_IN:
 			ctx = bot.SystemContext(qc)
 			await match.check_in.start(ctx)  # Spawn a new check_in message
@@ -152,6 +155,10 @@ class Match:
 		# Set working objects
 		self.id = match_id
 		self.ranked = self.cfg['ranked'] and self.cfg['pick_teams'] != 'no teams'
+		# An unranked match normally ends as soon as it starts. Held, it stays in progress (players can't add
+		# elsewhere) until its result comes in, the hold time is up, or its series ends (bot.series).
+		self.held = not self.ranked and bool(self.cfg['hold_time'] or (self.cfg['series_length'] or 1) > 1)
+		self.hold_until = None
 		self.players = list(players)
 		self.ratings = ratings
 		self.winner = None
@@ -239,7 +246,15 @@ class Match:
 		elif self.state == self.CHECK_IN:
 			await self.check_in.think(frame_time)
 
-		elif frame_time > self.lifetime + self.start_time:
+		elif self.held and self.state == self.WAITING_REPORT:
+			if bot.series.for_match(self):
+				pass   # it ends with its series, which has its own timeout
+			elif self.hold_until and frame_time >= self.hold_until:
+				await self.end_hold(bot.SystemContext(self.qc), self.gt("hold time is up"))
+			elif not self.hold_until:
+				await self.end_hold(bot.SystemContext(self.qc), self.gt("series over"))
+
+		elif frame_time > self.lifetime + max(self.start_time, bot.series.last_activity(self) or 0):
 			ctx = bot.SystemContext(self.qc)
 			try:
 				await ctx.error(self.gt("Match {queue} ({id}) has timed out.").format(
@@ -268,6 +283,8 @@ class Match:
 		return self.queue.qc.rating_rank(self.ratings[member.id])['rank']
 
 	async def start_waiting_report(self, ctx):
+		if self.held and self.cfg['hold_time']:
+			self.hold_until = int(time()) + int(self.cfg['hold_time'])
 		# remove never picked players from the match
 		if len(self.teams[2]):
 			for p in self.teams[2]:
@@ -285,6 +302,10 @@ class Match:
 	async def report_loss(self, ctx, member, draw_flag):
 		if self.state != self.WAITING_REPORT:
 			raise bot.Exc.MatchStateError(self.gt("The match must be on the waiting report stage."))
+
+		if self.held:
+			await self.report_held(ctx, member, draw_flag)
+			return
 
 		team = find(lambda team: member in team[:1], self.teams[:2])
 		if team is None:
@@ -313,6 +334,33 @@ class Match:
 		else:
 			self.winner = enemy_team.idx
 			self.scores[self.winner] = 1
+		await self.finish_match(ctx)
+
+	async def report_held(self, ctx, member, draw_flag):
+		""" /report in a held unranked match: any of its players ends it (nothing is rated). """
+		if member not in self.players:
+			raise bot.Exc.PermissionError(self.gt("Only the match's players can end it."))
+		if bot.series.for_match(self):
+			raise bot.Exc.PermissionError(self.gt(
+				"This match is playing a series: it ends after the last game. A moderator can end it with /endseries."
+			))
+		if draw_flag == 2:
+			await self.cancel(ctx)
+			return
+		team = find(lambda t: member in t, self.teams[:2])
+		self.winner = None if draw_flag or team is None else 1 - team.idx
+		if self.winner is not None:
+			self.scores[self.winner] = 1
+		await self.end_hold(ctx, self.gt("reported by {player}").format(player=get_nick(member)))
+
+	async def end_hold(self, ctx, why):
+		""" A held unranked match is over: its players can add again. """
+		try:
+			await ctx.notice(self.gt("Match {queue} ({id}) is over ({why}). Its players can add again.").format(
+				queue=self.queue.name, id=self.id, why=why
+			))
+		except DiscordException:
+			pass
 		await self.finish_match(ctx)
 
 	async def report_win(self, ctx, team_name, draw=False):  # version for admins/mods
@@ -382,13 +430,16 @@ class Match:
 				await ctx.notice(content=content, embed=self.embeds.final_message_modern())
 		except DiscordException:
 			pass
+		bot.series.started(self)
 		bot.panel.bump(self.qc)
 		bot.voice.start(bot.voice.match_started(self))
 
 	async def finish_match(self, ctx):
 		bot.active_matches.remove(self)
-		if self.state == self.WAITING_REPORT:  # reported; an unranked match ends as soon as it starts
+		if self.state == self.WAITING_REPORT:  # reported or held; an unranked match ends as soon as it starts
 			bot.voice.start(bot.voice.match_ended(self))
+		if self.held:
+			await bot.series.match_over(self)
 		self.queue.last_maps += self.maps
 		self.queue.last_maps = self.queue.last_maps[-len(self.maps)*self.queue.cfg.map_cooldown:]
 
@@ -412,3 +463,4 @@ class Match:
 		bot.active_matches.remove(self)
 		if self.state == self.WAITING_REPORT:
 			bot.voice.start(bot.voice.match_ended(self))
+		await bot.series.match_over(self, canceled=True)

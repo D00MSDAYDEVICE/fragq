@@ -7,6 +7,10 @@ waiting in the Lobby are moved into their team's channel; when it is reported or
 lobby" on), they are moved back. Game servers can move players too, for substitutes and team changes, through
 a connector with "Move players in voice" (POST /voice).
 
+During a series (bot.series) the players stay in their team channels between games: Lobby requests from the game
+server are skipped for that queue, and a match reported mid-series doesn't move anyone. When the series ends, its
+players go back to the Lobby.
+
 FragQ never pulls anyone into voice or out of another voice channel. It only moves members who are already in
 one of the queue's three channels: into a team channel from the Lobby (or from the other team's channel, for a
 team change), and into the Lobby from a team channel.
@@ -104,7 +108,7 @@ async def match_started(match):
 async def match_ended(match):
 	""" The match was reported or canceled: move its players from the team channels back to the Lobby. """
 	q = match.queue
-	if not enabled(q) or not q.cfg.voice_return:
+	if not enabled(q) or not q.cfg.voice_return or bot.series.for_match(match):
 		return
 	try:
 		guild = dc.get_guild(match.qc.guild_id)
@@ -114,6 +118,19 @@ async def match_ended(match):
 		log.info(f"Voice moves after match #{match.id} ({q.name}): {_summary(counts)}.")
 	except Exception as e:
 		log.error(f"Voice moves after match #{match.id} failed: {e!r}")
+
+
+async def series_ended(q, user_ids, match_id):
+	""" A series is over: move its players from the team channels back to the Lobby. """
+	if not enabled(q) or not q.cfg.voice_return:
+		return
+	try:
+		guild = dc.get_guild(q.qc.guild_id)
+		lobby = channels(q)[0]
+		counts = await _move_all(q, guild, [(guild.get_member(uid), lobby) for uid in user_ids], f"FragQ series of match #{match_id} ended")
+		log.info(f"Voice moves after the series of match #{match_id} ({q.name}): {_summary(counts)}.")
+	except Exception as e:
+		log.error(f"Voice moves after the series of match #{match_id} failed: {e!r}")
 
 
 def start(coro):
@@ -195,6 +212,12 @@ async def _queue_for(c, steam_ids, data):
 			raise ConnectorError(400, "'queue' must be a queue name.")
 		named = [(q, qc) for q, qc in queues if q.name.casefold() == name.strip().casefold()]   # any case
 		if not named:
+			elsewhere = next((q for qc in bot.queue_channels.values() if qc.guild_id == c["guild_id"] for q in qc.queues
+							  if q.name.casefold() == name.strip().casefold()), None)
+			if elsewhere is not None:   # on the Discord server, but not ticked on this connector
+				raise ConnectorError(400, f"The queue {elsewhere.name} isn't one of this connector's queues "
+										  f"({', '.join(q.name for q, _ in queues) or 'none'}). Tick it on the connector "
+										  "in FragQ's Connectors page.")
 			raise ConnectorError(400, f"This connector has no queue named '{name[:60]}'. Its queues: "
 									  f"{', '.join(q.name for q, _ in queues) or 'none'}.")
 		if len(named) > 1:
@@ -253,11 +276,15 @@ async def from_game(c, data):
 	slots = team_slots(q, {k: v for k, v in teams.items() if v}, match, guild, owners) if any(teams.values()) else {}
 	plan = [(sid, (team1, team2)[slots[label]]) for label, ids in teams.items() if ids for sid in ids]
 	plan += [(sid, lobby) for sid in lobby_ids]
+	in_series = bot.series.of(q) is not None   # between a series' games, players stay in their team channels
 	players = []
 	for sid, target in plan:
 		uid = owners.get(sid)
 		member = guild.get_member(uid) if uid else None
-		status = "not_linked" if uid is None else await move(guild, q, member, target, f"{c['name']} (FragQ connector)")
+		if in_series and target is lobby:
+			status = "in_series"
+		else:
+			status = "not_linked" if uid is None else await move(guild, q, member, target, f"{c['name']} (FragQ connector)")
 		players.append(dict(steam_id=sid, discord_name=member.name if member else None, status=status, channel=target.name,
 							fragdex=sid in found))
 	moved = sum(p["status"] == "moved" for p in players)

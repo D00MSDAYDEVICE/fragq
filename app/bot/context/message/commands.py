@@ -237,6 +237,13 @@ async def _lastgame(ctx: MessageContext, args: str = None):
 		await bot.commands.last_game(ctx, queue=args)
 
 
+@message_command('endseries', 'end_series')
+async def _end_series(ctx: MessageContext, args: str = None):
+	if not args:
+		raise bot.Exc.SyntaxError(f"Usage: {ctx.qc.cfg.prefix}endseries __queue__")
+	await bot.commands.end_series(ctx, queue=args)
+
+
 @message_command('cancel_match')
 async def _cancel_match(ctx: MessageContext, args: str = None):
 	if not args or not args.isdigit():

@@ -15,7 +15,7 @@ Authorization: Bearer fq_...
 
 | Request | Key permission | What it does |
 |---|---|---|
-| `GET /status` | any | The connector's name, game, queues and permissions. Use it to test the key. |
+| `GET /status` | any | The connector's name, game, queues and permissions. Use it to test the key. `connector.queue_list` gives each of the key's queues with its channel and `voice` (voice moves on), and `connector.other_queues` the Discord server's queues the key doesn't have. |
 | `POST /results` | Send match results | Send one match's result (below) |
 | `POST /players/linked` | Check linked players | `{"steam_ids": ["7656…", …]}` (up to 64): which players have a linked Steam account |
 | `POST /link` | Link Steam accounts from the game | `{"steam_id": "7656…", "name": "in-game name", "discord": "user id or username"}`: ask the member to confirm the link in Discord |
@@ -70,7 +70,7 @@ rest of the match. FragQ only moves members who are already in the queue's Lobby
 ```
 
 `status` is one of `moved`, `already_there`, `not_in_voice`, `other_channel`, `not_linked`, `not_member`,
-`no_permission` or `failed` (see [Voice moves](../administration/voice.md#when-nobody-moves)). The answer is
+`no_permission`, `failed` or `in_series` (a Lobby move skipped between a [series](../playing/matches.md#series)' games; see [Voice moves](../administration/voice.md#when-nobody-moves)). The answer is
 `409` when none of the connector's queues has voice moves on.
 
 Each player also has `"fragdex": true` when FragQ found them with a
@@ -178,7 +178,9 @@ A highlight with only a `value` (such as `{"label": "Quitters", "value": "None"}
 ```
 
 `status` is `posted`, `stored` (no FragQ match, and the connector doesn't post those) or `duplicate`.
-`match_id` is the FragQ match the result was attached to, or `null`.
+`match_id` is the FragQ match the result was attached to, or `null`. During a
+[series](../playing/matches.md#series), `series` gives the game the result counted as, such as
+`{"game": 2, "of": 3}`; otherwise it is `null`.
 
 ## Examples
 

@@ -17,3 +17,6 @@ class QueueResponses:
 
 	class NotAllowed(QueueResponse):
 		pass
+
+	class Held(QueueResponse):
+		pass

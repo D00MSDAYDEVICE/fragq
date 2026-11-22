@@ -8,11 +8,14 @@ hide:
 ![FragQ](assets/fragq-logo.png#only-dark){ .hero-logo }
 ![FragQ](assets/fragq-logo-light.png#only-light){ .hero-logo }
 
-**FragQ is a self-hosted Discord bot for pickup games, with a web control panel.** Players join queues
-from a button panel or with `!add` and `++`. When a queue fills, FragQ runs the check-in, picks
-captains, hosts the draft or balances the teams by rating, chooses the maps and posts the server
-address. Ranked queues keep ratings with TrueSkill, Glicko2 or flat points, assign rank roles, and keep
-a leaderboard and full match history.
+**FragQ is a self-hosted Discord bot for pickup games, complete with a web control panel.** Players join
+queues through interactive button panels or commands like `!add` and `++`. Features, game modes, commands,
+rating systems, and queue settings are configurable to suit your community and how you want to run your
+games.
+
+FragQ can handle check-ins, captain selection, player drafts or rating-based team balancing, map selection,
+and server announcements. Ranked queues can track player ratings using TrueSkill, Glicko2, or flat points,
+with rank roles, leaderboards, and full match history.
 
 ![The web panel: a channel's live queues](assets/screenshots/live.png){ .shot loading=lazy }
 
@@ -29,6 +32,7 @@ commands and database unchanged and adds:
 
 [Install FragQ](getting-started/installation.md){ .md-button .md-button--primary }
 [What is FragQ?](getting-started/introduction.md){ .md-button }
+[Commands](reference/commands.md){ .md-button }
 
 ## Start here
 

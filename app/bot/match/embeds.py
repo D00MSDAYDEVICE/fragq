@@ -5,6 +5,8 @@ from nextcord import Embed, Colour, Streaming, Member
 from core.client import dc
 from core.utils import get_nick, join_and
 
+import bot
+
 
 class Embeds:
 	""" This class generates discord embeds for various match states """
@@ -291,5 +293,9 @@ class Embeds:
 				))
 
 		hint = "captains report the result with /report" if m.ranked else "GLHF"
+		if (series := bot.series.for_match(m)) is not None:
+			hint = f"series of {series['length']} games · " + hint
+		elif m.held and m.hold_until:
+			hint = "players are held until the result or " + datetime.fromtimestamp(m.hold_until, timezone.utc).strftime("%H:%M UTC") + " · GLHF"
 		embed.set_footer(text=f"Match #{m.id} · {hint}", icon_url=icon)
 		return embed

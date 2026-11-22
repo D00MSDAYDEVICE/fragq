@@ -50,9 +50,11 @@ It is one file, `fragq.py`, that works on both **minqlx** and **minqlxtended**.
 
 ## Voice moves
 
-With `qlx_fragqVoice 1`, the plugin sends FragQ the teams when a match starts and a few seconds after team
-changes, and sends the players back to the lobby when the match ends or is aborted (`!abort` or an abort
-vote). FragQ then moves them between the queue's Discord voice channels. It needs:
+With `qlx_fragqVoice 1`, the plugin sends FragQ the teams as soon as the match countdown starts, again when
+the match starts if the teams changed, and a few seconds after team changes during the countdown or the match.
+It sends the players back to the lobby when the match ends or is aborted (`!abort` or an abort vote). FragQ
+then moves them between the queue's Discord voice channels. Changing `qlx_fragqVoice` in warmup takes effect
+at the next countdown. It needs:
 
 - [voice moves](../administration/voice.md) turned on for the queue, with its three voice channels set;
 - the **Move players in voice** permission on the connector;
@@ -60,7 +62,22 @@ vote). FragQ then moves them between the queue's Discord voice channels. It need
 
 The red team goes to the team channel with *red* in its name and blue to the one with *blue*; with other
 channel names, see [how FragQ decides](../administration/voice.md#game-servers). Only team modes (CA, TDM,
-CTF and so on) send teams. `!fragq` shows the result of the last request.
+CTF and so on) send teams. A countdown that is called off (a player leaves before it ends) sends nothing,
+so the players stay in their team channels until the next countdown or `!voice lobby`.
+
+`!fragq` shows two voice lines:
+
+- **Last voice event**: what the last countdown, match start, team change, match end or abort did, or why it
+  sent nothing, such as *nothing sent, qlx_fragqVoice is 0*, *nothing sent, duel isn't a team mode* or
+  *nothing sent, only bots on red and blue*.
+- **Last voice request**: how FragQ answered, with the reason for anyone not moved, such as
+  *countdown: 3 of 4 moved (CHI3): 1 not in voice*.
+
+The server log has a `fragq: voice` line for every event and request.
+
+During a [series](../playing/matches.md#series), FragQ answers the Lobby moves after each game with
+*in a series* (shown in **Last voice request**) and leaves the players in their team channels; the
+countdown moves still run every game. Each match result the plugin sends counts one game of the series.
 
 ### Several servers and queues
 
@@ -77,14 +94,28 @@ case-sensitive. Players are only moved if they are already in that queue's Lobby
 in another queue's channels is never pulled across.
 
 The simplest setup is one connector per server, with only the queues that server plays. If servers share a key
-that has several queues, set each server's queue:
+that has several queues, set each server's queue in `server.cfg` (or `+set qlx_fragqQueue CA` on the
+command line), so it is still set after a restart:
 
 ```text
 set qlx_fragqQueue "CA"
 ```
 
+Without it, automatic moves only work for players in a FragQ match, since that tells FragQ the queue.
+
 `qlx_fragqQueue` is sent with match results too, so FragQ only looks for the match in that queue. `!fragq test`
-warns when the key has no queue of that name, or two of them (in different channels).
+warns when the key has no queue of that name, or two of them (in different channels), and when it isn't set but
+several of the key's queues have voice moves on. `!fragq queue` says so too.
+
+`!fragq queue` lists the key's queues with their channel and whether voice moves are on, marks the one
+`qlx_fragqQueue` picks, and names the Discord server's queues the key doesn't have:
+
+```text
+FragQ: queues of the key CHI server:
+  CHI in #chi-pickup, voice moves on <- qlx_fragqQueue
+  DEN in #den-pickup, voice moves off
+Not on this key: CHI3 (#chi3-pickup). Tick a queue on the connector in FragQ's Connectors page to use it.
+```
 
 ### Moving players by hand
 
@@ -199,7 +230,8 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!linkenforce [on\|off]` | `qlx_fragqAdminLevel` | Require linked Steam accounts to play |
 | `!setdiscord <invite URL>` | `qlx_fragqAdminLevel` | The Discord invite shown to players; `off` removes it |
 | `!voice teams` / `lobby` / `<player id> red\|blue\|lobby` `[queue]` | `qlx_voicemoveperm` | [Move players in voice](#moving-players-by-hand) now |
-| `!fragq` | `qlx_fragqAdminLevel` | Status: address, key, last result sent |
+| `!fragq` | `qlx_fragqAdminLevel` | Status, one setting per line: address, key, results and the last one sent, link required, Discord invite, queue, auto voice moves (`qlx_fragqVoice`), the last voice event and the last voice request |
+| `!fragq queue` | `qlx_fragqAdminLevel` | The key's queues (channel, voice moves on or off, which one `qlx_fragqQueue` picks) and the Discord server's queues the key doesn't have |
 | `!fragq url <address>` | 5 | Set the FragQ address |
 | `!fragq key <key>` | 5, console / rcon only | Set the connector key |
 | `!fragq test` | 5 | Check the address and the key |
@@ -229,8 +261,10 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!fragq test`: *HTTP 401: Invalid connector key* | The key is wrong or was replaced. Set it again with `!fragq key`. |
 | *HTTP 403: … can't be used from …* | The server's address isn't in the connector's **Allowed IPs**. The message shows the address FragQ saw. |
 | *HTTP 401: Not logged in* or *HTTP 404: Wrong address* | The address has a path after the panel's address, such as `https://fragq.example.com/api`. Set it to the panel's address alone with `!fragq url https://fragq.example.com`. Plugin 1.2.1 and later remove the extra path themselves. |
-| *Several of this connector's queues have voice moves on…* | Set `qlx_fragqQueue`, or add the queue's name after `!voice`. |
+| *Several of this connector's queues have voice moves on…* | FragQ can't tell which queue's voice channels to use. Set `qlx_fragqQueue` in `server.cfg` (a value set in the console is gone after a restart), or add the queue's name after `!voice`. Plugin 1.4.0 says this in the error itself. |
+| *The queue … isn't one of this connector's queues* | The queue exists but isn't ticked on the key. Edit the connector on the **Connectors** page and tick it. Queues added or duplicated later aren't added to connectors by themselves. |
 | *This connector has 2 queues named …* | Two of the key's queues, in different channels, have the same name. Give each server its own connector, or rename one. |
 | *certificate verify failed* | Set `qlx_fragqVerifyTls 0` for a self-signed certificate. |
+| Players aren't moved when a match starts, but `!voice` works | Run `!fragq` after a countdown and read **Last voice event**. *None since the plugin loaded* on plugin 1.3.x and older: those wait for the match to start, which some minqlxtended builds never report. Plugin 1.4.0 moves at the countdown. *Nothing sent, …* says what to change. **Auto voice moves** must be on: that is `qlx_fragqVoice 1` on the game server, not the queue's setting in FragQ. |
 | Results are never sent | `zmq_stats_enable 1` is missing (needed on minqlx and minqlxtended). Check `!fragq` for the last result's status. |
 | Results post without a match number | Fewer than half the match's players have linked Steam accounts, or the match is older than 6 hours, or the queue isn't one of the connector's queues. |

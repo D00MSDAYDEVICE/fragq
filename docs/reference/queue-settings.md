@@ -25,6 +25,8 @@ Durations are written like `1h 30m`, `45m` or `00:15:00`. Roles and channels are
 | Blacklist role | `blacklist_role` | role | not set | Users with this role wont be able to add to this queue. |
 | Whitelist role | `whitelist_role` | role | not set | Only users with this role will be able to add to this queue. |
 | Match lifetime | `match_lifetime` | duration | not set | Set a custom match life time before it times out then ranked is enabled. Default: 3 hours. |
+| Hold players after start | `hold_time` | duration | not set | Unranked queues only: keep an unranked match in progress for this long after it starts, so its players can't add again while they play.<br>It ends earlier when the game server posts the match's result, a player of the match types /report, or a moderator reports or cancels it. Empty or 0: off, the match ends as soon as it starts. |
+| Series length | `series_length` | number | `1` | Games one pickup plays on the game server before the queue opens again. 1: off.<br>While a series is on, nobody can add to the queue. Each result the game server posts for the match counts one game; the series ends with the last one, /endseries, the match being canceled, or no result for the match lifetime. Unranked matches stay in progress until the series ends. |
 | Aliases | `aliases` | table | empty | Other names for this queue, you can also group queues by giving them a same alias. |
 
 **Aliases** (`aliases`) is a table with the columns `alias`.

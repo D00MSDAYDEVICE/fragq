@@ -387,7 +387,7 @@
         try { localStorage.setItem("fragq-theme", t); } catch (e) { /* ignore */ }
       } }, icon("sun"));
     var links = h("nav", { class: "top-links" },
-      me.bot.commands ? h("a", { href: me.bot.commands, target: "_blank", rel: "noopener noreferrer" }, icon("book"), h("span", { text: "Commands" })) : null,
+      me.bot.docs ? h("a", { href: me.bot.docs, target: "_blank", rel: "noopener noreferrer" }, icon("book"), h("span", { text: "Documentation" })) : null,
       me.bot.invite ? h("a", { href: me.bot.invite, target: "_blank", rel: "noopener noreferrer" }, icon("plus"), h("span", { text: "Invite bot" })) : null,
       me.user.owner ? (dom.statusLink = h("a", { href: "/status", onclick: function (e) { e.preventDefault(); go({ page: "status" }); } },
         icon("terminal"), h("span", { text: "Bot status" }))) : null,
@@ -404,7 +404,6 @@
       brand(), links,
       h("div", { class: "top-actions" },
         h("div", { class: "botpill", title: me.bot.ready ? "Connected to Discord" : "Connecting…" },
-          me.bot.avatar ? h("img", { src: me.bot.avatar, alt: "" }) : null,
           h("span", { class: "st" }, h("span", { class: "bn", text: me.bot.name }), h("span", { class: "bv", text: "v" + me.bot.version })),
           h("span", { class: "live-dot " + (me.bot.ready ? "on" : "off") })),
         h("div", { class: "whoami", title: me.user.username || me.user.name },
@@ -583,6 +582,7 @@
       danger ? { icon: "copy", label: "Duplicate", action: function () { duplicateQueue(c, q); } } : null,
       { icon: "swap", label: can("edit_queue", c) ? "Import / export config" : "Export config", action: function () { cfgModal("queue", c, q); } },
       can("clear_queues", c) ? { icon: "eraser", label: "Remove all players", action: function () { clearQueue(c, q); } } : null,
+      can("clear_queues", c) && q.series ? { icon: "play", label: "End series", action: function () { endSeries(c, q); } } : null,
       danger ? "-" : null,
       danger ? { icon: "trash", label: "Delete queue", urgent: true, action: function () { deleteQueue(c, q); } } : null,
     ]);
@@ -650,6 +650,17 @@
         if (!ok) return;
         return api("POST", "/api/channels/" + c.id + "/queues/" + q.id + "/clear").then(function () {
           toast(q.name + " cleared."); reloadGuild();
+        });
+      }).catch(function (e) { toast(e.message, "error"); });
+  }
+
+  function endSeries(c, q) {
+    confirmModal({ title: "End series", text: "End the series of " + q.name + " now (" + seriesText(q.series) + ")? The queue opens again" +
+      " and the players go back to the Lobby.", ok: "End series" })
+      .then(function (ok) {
+        if (!ok) return;
+        return api("POST", "/api/channels/" + c.id + "/queues/" + q.id + "/endseries").then(function () {
+          toast("Series of " + q.name + " ended. The queue is open again."); reloadGuild();
         });
       }).catch(function (e) { toast(e.message, "error"); });
   }
@@ -833,12 +844,18 @@
     return h("span", { class: "person" }, p && p.avatar ? h("img", { src: p.avatar, alt: "", loading: "lazy" }) : h("span", { style: "width:6px" }), p ? p.name : "?");
   }
 
+  function seriesText(s) {
+    return "Series game " + Math.min(s.played + 1, s.length) + " of " + s.length + " (match #" + s.match_id + ")";
+  }
+
   function queueCard(q, extra) {
     var pct = q.size ? Math.round(100 * q.players / q.size) : 0;
     return h("div", { class: "qcard" },
       h("div", { class: "qcard-head" }, h("span", { class: "pq", text: "PQ" }), h("strong", { text: q.name }), extra || null,
+        q.series ? h("span", { class: "badge blue", title: "Nobody can add until the series ends", text: "Held" }) : null,
         h("span", { class: "t-count" + (q.players ? " hot" : ""), text: q.players + "/" + q.size }),
         h("span", { class: "meter" }, h("span", { style: "width:" + pct + "%" }))),
+      q.series ? h("div", { class: "muted", style: "margin-top:6px;font-size:13px", text: seriesText(q.series) }) : null,
       q.who && q.who.length ? h("div", { class: "ppl" }, q.who.map(personEl)) : null);
   }
 
@@ -847,7 +864,8 @@
       h("div", { class: "qcard-head" },
         h("strong", { text: "#" + m.id + " · " + m.queue }),
         chanName ? h("span", { class: "muted", text: "in #" + chanName }) : null,
-        h("span", { class: "badge " + (m.state === "waiting report" ? "blue" : "warn"), style: "margin-left:auto", text: m.state }),
+        h("span", { class: "badge " + (m.state === "waiting report" || m.state === "in progress" ? "blue" : "warn"), style: "margin-left:auto",
+          text: m.state + (m.held_until ? " · held until " + new Date(m.held_until * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "") }),
         m.ranked ? h("span", { class: "badge ok", text: "ranked" }) : null,
         h("span", { class: "faint mono", text: ago(m.started) })),
       m.maps && m.maps.length ? h("div", { class: "muted", style: "margin-top:6px;font-size:13px", text: "Maps: " + m.maps.join(", ") }) : null,
@@ -1914,6 +1932,8 @@
         h("div", { class: "title" }, icon("queue"), h("h1", { text: q.name }), h("span", { class: "t-count" + (q.players ? " hot" : ""), text: q.players + "/" + q.size }))),
       h("div", { class: "head-actions" },
         can("clear_queues", c) && q.players ? h("button", { class: "btn", type: "button", onclick: function () { clearQueue(c, q); } }, icon("eraser"), "Remove all players") : null,
+        can("clear_queues", c) && q.series ? h("button", { class: "btn btn-warn", type: "button", title: seriesText(q.series),
+          onclick: function () { endSeries(c, q); } }, icon("play"), "End series") : null,
         h("button", { class: "btn", type: "button", onclick: function () { cfgModal("queue", c, q); } }, icon("swap"), can("edit_queue", c) ? "Import / export" : "Export"),
         can("manage_queues", c) ? h("button", { class: "btn btn-danger", type: "button", onclick: function () { deleteQueue(c, q); } }, icon("trash"), "Delete") : null));
     var body = h("div");

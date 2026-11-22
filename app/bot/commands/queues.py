@@ -1,12 +1,12 @@
 __all__ = [
 	'add', 'remove', 'who', 'add_player', 'remove_player', 'promote', 'start', 'split',
-	'reset', 'subscribe', 'server', 'maps'
+	'reset', 'subscribe', 'server', 'maps', 'end_series'
 ]
 
 import time
 from random import choice
 from nextcord import Member
-from core.utils import error_embed, join_and, find, seconds_to_str
+from core.utils import error_embed, join_and, find, seconds_to_str, get_nick
 import bot
 
 
@@ -42,6 +42,9 @@ async def add(ctx, queues: str = None):
 		if qr[q] == bot.Qr.QueueStarted:
 			await ctx.notice(ctx.qc.topic)
 			return
+
+	for q in [q for q in qr.keys() if qr[q] == bot.Qr.Held]:
+		await ctx.error(bot.series.held_message(q))
 
 	if len(not_allowed := [q for q in qr.keys() if qr[q] == bot.Qr.NotAllowed]):
 		await ctx.error(ctx.qc.gt("You are not allowed to add to {queues} queues.".format(
@@ -114,6 +117,8 @@ async def add_player(ctx, player: Member, queue: str):
 		await ctx.reply(ctx.qc.topic)
 	elif resp == bot.Qr.QueueStarted:
 		await ctx.reply(ctx.qc.topic)
+	elif resp == bot.Qr.Held:
+		await ctx.error(bot.series.held_message(q))
 	else:
 		await ctx.error(f"Got bad queue response: {resp.__name__}.")
 
@@ -179,6 +184,18 @@ async def reset(ctx, queue: str = None):
 		for q in ctx.qc.queues:
 			await q.reset()
 	await ctx.reply(ctx.qc.topic)
+
+
+async def end_series(ctx, queue: str):
+	""" End a queue's series now: the queue opens again """
+	ctx.check_perms(ctx.Perms.MODERATOR)
+	if not queue:
+		raise bot.Exc.SyntaxError(ctx.qc.gt("Name the queue whose series to end."))
+	if (q := find(lambda i: i.name.lower() == queue.strip().lower(), ctx.qc.queues)) is None:
+		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
+	if not bot.series.of(q):
+		raise bot.Exc.NotFoundError(ctx.qc.gt("**{queue}** has no series in progress.").format(queue=q.name))
+	await bot.series.end(q, ctx.qc.gt("ended by {player}").format(player=get_nick(ctx.author)), ctx)
 
 
 async def subscribe(ctx, queues: str = None, unsub: bool = False):

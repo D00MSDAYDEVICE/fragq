@@ -80,3 +80,4 @@ FragQ logs what it did for each match. A game server gets the outcome for each p
 | `not_member` | Not a member of the Discord server |
 | `no_permission` | The bot lacks Move Members, Connect or View Channels on one of the channels |
 | `failed` | Discord refused for another reason; the bot's log says why |
+| `in_series` | A Lobby move from the game server between a [series](../playing/matches.md#series)' games: players stay in their team channels until the series ends |

@@ -584,6 +584,14 @@ async def _report(
 ): await run_slash(bot.commands.report, interaction=interaction, result=result)
 
 
+@dc.slash_command(name='endseries', description="End a queue's series now, so the queue opens again (moderators).", **guild_kwargs)
+async def _end_series(
+		interaction: Interaction,
+		queue: str = SlashOption(name="queue", description="The queue whose series to end.")
+): await run_slash(bot.commands.end_series, interaction=interaction, queue=queue)
+_end_series.on_autocomplete("queue")(autocomplete.queues)
+
+
 @dc.slash_command(name='lastgame', description='Show last game details.', **guild_kwargs)
 async def _last_game(
 		interaction: Interaction,

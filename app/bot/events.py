@@ -25,6 +25,7 @@ async def on_think(frame_time):
 			]))
 			bot.active_matches.remove(match)
 			break
+	await bot.series.think(frame_time)
 	await bot.expire.think(frame_time)
 	await bot.noadds.think(frame_time)
 	await bot.stats.jobs.think(frame_time)

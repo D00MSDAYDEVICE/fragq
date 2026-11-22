@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.4.0 (2026-11-21)
+
+- **Series.** A new queue setting, **Series length**, lets one pickup play several games on the game server
+  before the queue opens again, on ranked and unranked queues. While a series is on, nobody can add to the
+  queue (*"… is held: series game 2 of 3 (match #123)"*; the queue panel shows it 🔒 held). Each result the
+  game server posts for the match counts one game, and its post says *Series game 2 of 3*. The series ends
+  with the last game, `!endseries <queue>` or `/endseries` (moderators), **End series** in the web panel, the
+  match being canceled, or no result for the match lifetime. Between games the players stay in their team
+  voice channels (the game server's Lobby moves answer `in_series`); they go back to the Lobby at the end.
+  A series survives a bot restart.
+- **Hold players after start** (unranked queues). A new queue setting keeps an unranked match in progress
+  for a while after it starts, so its players can't add again while they play. It ends with the game
+  server's result, `/report` from one of its players, a moderator, or when the time is up. Nothing is rated.
+- **Web panel header:** the bot's version is shown in green, without the bot's picture beside it, and the
+  **Commands** link is now **Documentation**, to the documentation's home page. The documentation's home page has
+  a new intro and a **Commands** button.
+- **Quake Live plugin 1.4.0: voice moves at the countdown.** With `qlx_fragqVoice 1` the teams are moved as soon
+  as the match countdown starts, instead of when the match starts; some minqlxtended builds never report the
+  start, so players were never moved there. At the start the teams are sent again only if they changed, and team
+  changes during the countdown are sent too. `qlx_fragqVoice` is read again at every countdown, so turning it on
+  in warmup no longer waits for a map change.
+- **Voice diagnostics in `!fragq`:** *Auto voice moves* (`qlx_fragqVoice`, the game server's own switch),
+  *Last voice event* (what the last countdown, start, team change, match end or abort did, or why it sent
+  nothing: voice off, not a team mode, only bots on the teams) and *Last voice request* now with the reason for
+  anyone not moved (not in voice, not linked, in another voice channel …). Every event and request is also in
+  the server log.
+- **Quake Live plugin: `!fragq queue`.** Lists the key's queues with their channel and whether voice moves
+  are on, marks the one `qlx_fragqQueue` picks, and names the Discord server's queues the key doesn't have, so a
+  queue missing from the connector is easy to spot.
+- **Quake Live plugin: what to do when no queue is set.** When FragQ can't tell which queue a voice request is
+  for (several of the key's queues have voice moves on, and the players aren't in a FragQ match), the error in
+  `!fragq` and `!voice` now says to set `qlx_fragqQueue` (or, for `!voice`, to add a queue name). `!fragq test`
+  and `!fragq queue` warn when `qlx_fragqQueue` isn't set but several of the key's queues have voice moves on.
+- **`!fragq` status, one setting per line:** address, key, results, last result, link required, Discord invite,
+  queue, auto voice moves, last voice event and last voice request each get a line, with the option in cyan and its setting in white
+  (on/yes green, off/no red).
+- **`GET /status`** also returns `queue_list` (channel and voice moves of each of the key's queues) and
+  `other_queues`.
+- **Clearer error for a queue missing from the key:** a voice request naming a queue that exists on the Discord
+  server but isn't ticked on the connector (such as a queue added or duplicated after the connector was made) now
+  says so and points to the Connectors page, instead of only *no queue named …*.
+
 ## 1.3.4 (2026-11-21)
 
 - **Quake Live plugin 1.3.0: `qlx_fragqQueue`.** Names the FragQ queue a server plays. It is sent with every voice

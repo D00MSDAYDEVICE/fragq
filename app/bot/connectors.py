@@ -432,11 +432,21 @@ async def flush_usage():
 
 def status(c):
 	""" GET /status: what the key is for, so a plugin can show it in its test command. """
+	def channel_name(qc):
+		channel = dc.get_channel(qc.id)
+		return channel.name if channel else qc.cfg.cfg_info.get("channel_name", str(qc.id))
+
+	mine = queue_objects(c)
+	ids = {q.id for q, _ in mine}
+	others = [(q, qc) for qc in bot.queue_channels.values() if qc.guild_id == c["guild_id"] for q in qc.queues if q.id not in ids]
 	return dict(
 		ok=True, fragq_version=__version__,
 		connector=dict(
 			name=c["name"], game=GAME.get(c["game"], GAME["generic"])[1],
-			queues=[q.name for q, _ in queue_objects(c)],
+			queues=[q.name for q, _ in mine],
+			# details for listing them in the game: the key's queues, and the Discord server's other queues
+			queue_list=[dict(name=q.name, channel=channel_name(qc), voice=bot.voice.enabled(q)) for q, qc in mine],
+			other_queues=[dict(name=q.name, channel=channel_name(qc)) for q, qc in others][:50],
 			can=dict(results=c["can_results"], check=c["can_check"], link=c["can_link"], export=c["can_export"], voice=c["can_voice"]),
 		),
 		server_time=int(time.time()),
@@ -593,6 +603,21 @@ async def _recent(c, queue_ids):
 	return cands
 
 
+def _series_match(c, result):
+	"""
+	No match was found by its players (some may not be linked): during a series, a result for the queue it names,
+	or from a key with only one series on, is the series' game.
+	"""
+	on = [(q, qc) for q, qc in queue_objects(c) if bot.series.of(q)]
+	if result.get("queue"):
+		on = [(q, qc) for q, qc in on if q.name.casefold() == result["queue"].strip().casefold()]
+	if len(on) != 1:
+		return None
+	q, qc = on[0]
+	s = bot.series.of(q)
+	return dict(match_id=s["match_id"], qc=qc, queue=q, users=set(s["players"]), at=s["started"])
+
+
 async def find_match(c, result):
 	""" The FragQ match a result belongs to, or None: most of its players must be in the game's result. """
 	queue_ids = set(c["queues"])
@@ -615,8 +640,10 @@ async def find_match(c, result):
 		overlap = len(m["users"] & users)
 		if not m["users"] or overlap < max(1, math.ceil(len(m["users"]) / 2)):
 			continue
-		# a fuller overlap first, then matches that have no result yet, then the most recent
-		score = (overlap / len(m["users"]), m["match_id"] not in reported, m["at"])
+		# a fuller overlap first, then a series in progress (its games share one match), then matches that have no
+		# result yet, then the most recent
+		series = bot.series.of(m["queue"])
+		score = (overlap / len(m["users"]), bool(series and series["match_id"] == m["match_id"]), m["match_id"] not in reported, m["at"])
 		if best is None or score > best[0]:
 			best = (score, m)
 	return best[1] if best else None
@@ -670,6 +697,8 @@ def build_embed(c, result, match=None, guild=None, test=False, extra=None):
 
 	if match:
 		title = f"{emoji} {match['queue'].name} · Match #{match['match_id']} results"
+		if match.get("series"):
+			title += " · Series game {} of {}".format(*match["series"])
 	else:
 		title = f"{emoji} {result.get('title') or 'Match results'}"
 	if test:
@@ -742,7 +771,10 @@ async def receive(c, data):
 		if old:
 			return dict(ok=True, status="duplicate", result_id=old["id"], match_id=old["match_id"], posted=bool(old["message_id"]))
 
-	match = await find_match(c, result)
+	match = await find_match(c, result) or _series_match(c, result)
+	series = bot.series.count(match["queue"], match["match_id"]) if match else None
+	if series:
+		match = dict(match, series=series)
 	queue, qc = (match["queue"], match["qc"]) if match else (None, None)
 	if match is None and c["unmatched_queue"]:
 		queue, qc = next(((q, x) for q, x in queue_objects(c) if q.id == c["unmatched_queue"]), (None, None))
@@ -754,10 +786,17 @@ async def receive(c, data):
 	)
 	result_id = await db.insert("fragq_match_results", row)
 	where = f"match #{match['match_id']} ({queue.name})" if match else (f"no FragQ match, posted in {queue.name}" if qc else "no FragQ match, stored only")
-	log.info(f"Connector '{c['name']}': result received, {where}.")
+	log.info(f"Connector '{c['name']}': result received, {where}" + (", series game {} of {}.".format(*series) if series else "."))
+	if series and bot.series.done(queue):
+		await bot.series.end(queue, qc.gt("last game played"))
+	elif match and not series:   # a held unranked match ends with its result
+		held = next((m for m in bot.active_matches if m.id == match["match_id"] and m.held and m.state == m.WAITING_REPORT), None)
+		if held is not None:
+			await held.end_hold(bot.SystemContext(held.qc), held.gt("result from the game server"))
 	return dict(
 		ok=True, status="posted" if message_id else "stored", result_id=result_id,
 		match_id=match["match_id"] if match else None, queue=queue.name if queue else None, posted=bool(message_id),
+		series=dict(game=series[0], of=series[1]) if series else None,
 	)
 
 
