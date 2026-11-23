@@ -20,7 +20,7 @@
 │   │   ├── panel.py          the Discord queue panel and its buttons
 │   │   ├── avatars.py        the avatar row image and its cache
 │   │   ├── steam.py          Steam lookups, links and the join prompt
-│   │   └── settings.py       bot-wide settings (Steam key, Require Linked Steam IDs)
+│   │   └── settings.py       bot-wide settings (Steam key, Fragdex, Slipgate)
 │   ├── webui/                aiohttp web server, Discord OAuth, JSON API, static front-end
 │   │   ├── access.py         web panel permissions (the Users page)
 │   │   └── schema.py         bridges the bot's config variables and the web editor

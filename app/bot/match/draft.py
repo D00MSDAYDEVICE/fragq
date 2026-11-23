@@ -110,6 +110,7 @@ class Draft:
 			}
 
 		team.append(player)
+		self.m.balance = None  # the teams changed: Slipgate's fairness no longer applies
 		await self.m.qc.remove_members(player, ctx=ctx)
 		await self.refresh(ctx)
 
@@ -134,6 +135,7 @@ class Draft:
 		team[team.index(player1)] = player2
 		self.m.players.remove(player1)
 		self.m.players.append(player2)
+		self.m.balance = None  # the teams changed: Slipgate's fairness no longer applies
 		if player1 in self.sub_queue:
 			self.sub_queue.remove(player1)
 		self.m.ratings = {

@@ -9,6 +9,7 @@ from core.cfg_factory import FactoryTable, CfgFactory, Variables, VariableTable
 from core.locales import locales
 from core.utils import join_and, seconds_to_str, get_nick
 from core.database import db
+from core.console import log
 
 import bot
 from bot.stats.rating import FlatRating, Glicko2Rating, TrueSkillRating
@@ -34,7 +35,7 @@ class QueueChannel:
 	cfg_factory = CfgFactory(
 		table=FactoryTable(name='qc_configs', p_key="channel_id"),
 		name="qc_config",
-		sections=["General", "Auto-remove", "Messages", "Rating", "Leaderboard"],
+		sections=["General", "Auto-remove", "Messages", "Rating", "Leaderboard", "Servers"],
 		variables=[
 			Variables.StrVar(
 				"prefix",
@@ -130,6 +131,17 @@ class QueueChannel:
 				section="General",
 				description="Set an answer on '!help' command."
 			),
+			VariableTable(
+				"servers",
+				display="Server list",
+				section="Servers",   # shown on the channel's Server List tab, not among the settings
+				description="Game servers of this channel, as IP:port, each with an optional label (shown in the web panel "
+							"only, to tell them apart). A queue can designate one of them for its matches.",
+				variables=[
+					Variables.ServerVar("address", notnull=True),
+					Variables.StrVar("label", verify=lambda s: len(s) <= 40, verify_message="A server label is at most 40 characters."),
+				]
+			),
 			Variables.OptionVar(
 				"match_embed_style",
 				display="Match start message",
@@ -163,7 +175,7 @@ class QueueChannel:
 				"panel_mod_buttons",
 				display="Moderator buttons on queue panel",
 				section="Messages",
-				description="Show Add Player and Pause Queue on the queue panel. Everyone can see them, only the moderator and admin roles can use them.",
+				description="Show Add Player, Pause Queue and (on a channel with a series queue) End Series on the queue panel. Everyone can see them, only the moderator and admin roles can use them.",
 				default=1,
 				notnull=True
 			),
@@ -202,6 +214,21 @@ class QueueChannel:
 				verify_message="Initial rating must be between 0 and 10000",
 				notnull=True,
 				on_change=bot.update_rating_system
+			),
+			Variables.BoolVar(
+				"slipgate_seed",
+				display="Start new players at their Slipgate rating",
+				section="Rating",
+				default=0,
+				notnull=True,
+				description="\n".join([
+					"Needs a Slipgate API key on the Settings page. When a ranked match starts on a queue with a Slipgate "
+					"game type, players who have no rating here yet start from their place on that game type's Slipgate "
+					"ladder instead of the initial rating: the middle of the ladder is the initial rating, and a top "
+					"player starts about two deviations above it.",
+					"Once per player, recorded in their rating history. Players who aren't linked to Steam, or are "
+					"unknown to Slipgate, start at the initial rating as before."
+				])
 			),
 			Variables.IntVar(
 				"rating_deviation",
@@ -400,16 +427,30 @@ class QueueChannel:
 
 	@property
 	def paused(self):
-		""" Paused channels refuse !add / ++ / Join; moderators can still add players. Kept in cfg_info. """
-		return bool(self.cfg.cfg_info.get('paused'))
+		""" Every queue of the channel is paused (each queue has its own pause: PickupQueue.paused). """
+		return bool(self.queues) and all(q.paused for q in self.queues)
+
+	@property
+	def paused_queues(self):
+		return [q for q in self.queues if q.paused]
 
 	async def set_paused(self, paused: bool):
+		""" Pause or resume every queue of the channel. """
+		for q in self.queues:
+			await q.set_paused(paused)
+
+	@property
+	def legacy_paused(self):
+		""" Up to FragQ 1.4 the whole channel was paused at once, kept in the channel's cfg_info. """
+		return bool(self.cfg.cfg_info.get('paused'))
+
+	async def migrate_pause(self):
+		""" A channel paused the old way: pause each of its queues instead, and clear the channel's flag. """
+		await self.set_paused(True)
 		info = dict(self.cfg.cfg_info)
-		if paused:
-			info['paused'] = True
-		else:
-			info.pop('paused', None)
+		info.pop('paused', None)
 		await self.cfg.set_info(info)
+		log.info(f"Channel {self.id} was paused: its pause is per queue now, {len(self.queues)} queue(s) paused.")
 
 	def update_lang(self):
 		self.gt = locales[self.cfg.lang]

@@ -47,9 +47,10 @@ FragQ removes players who aren't around anymore. What applies depends on the cha
 - **Blacklist / whitelist roles:** a channel or queue can refuse members with a blacklist role, or only
   accept members with a whitelist role.
 - **Noadds:** moderators can ban a player from the queues for a while with `/noadds add`.
-- **Linked Steam account:** when the bot owner turns on
-  [Require Linked Steam IDs](../administration/steam.md#require-linked-steam-ids), FragQ asks for your
-  Steam ID the first time you join. See [Linking Steam](steam.md).
+- **Linked Steam account:** on a queue with
+  [Require linked Steam IDs](../administration/steam.md#require-linked-steam-ids) on, FragQ asks for your
+  Steam ID the first time you join it. Other queues you add to at the same time you join straight away.
+  See [Linking Steam](steam.md).
 - **Already in a match:** you can't join while you are in a match that hasn't finished.
 
 ## Promoting a queue

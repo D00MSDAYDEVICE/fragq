@@ -9,6 +9,10 @@
 
 When Steam account changes are waiting for someone, the **Settings** link in the top bar shows how many.
 
+On a wide screen the panels sit in two columns: **Bot settings** and **Fragdex**, then **Slipgate** and
+**Backup and restore**, with **Linked players** across the full width below. On a narrow screen they are
+stacked.
+
 ![The Settings page](../assets/screenshots/settings.png){ .shot loading=lazy }
 
 ## Bot settings
@@ -21,14 +25,14 @@ The settings save as soon as you change them.
     [Keep it visible](../queue-panel/panel.md#keep-it-visible)). If it was on, every channel was
     switched on with the same number of minutes when you updated.
 
-### Require Linked Steam IDs
-
-Players must link a Steam account before they can join a queue. See
-[Steam integration](steam.md#require-linked-steam-ids).
-
 ### Steam Web API key
 
-Optional; makes Steam lookups faster. See [Steam integration](steam.md#steam-web-api-key).
+Optional; makes Steam lookups faster. The badge at the top right of the panel says whether a key is saved. See [Steam integration](steam.md#steam-web-api-key).
+
+### Require Linked Steam IDs moved
+
+It is a queue setting now (queue **Settings → General**), so each queue decides. The panel says so and shows
+how many players are linked. See [Steam integration](steam.md#require-linked-steam-ids).
 
 ## Fragdex
 
@@ -69,6 +73,11 @@ match a result belongs to. Players who want a real link still use `!steam`, `!li
 FragQ remembers each answer for 10 minutes (5 for a Steam ID Fragdex doesn't know), and waits at most 3
 seconds for Fragdex, so a slow or unreachable Fragdex never holds up a game server. The panel shows how many
 players were found since FragQ started, and the last failed lookup.
+
+## Slipgate
+
+A Slipgate API key lets queues balance teams with Slipgate ratings and gives new players a starting rating
+from Slipgate. See [Slipgate](slipgate.md).
 
 ## Linked players
 

@@ -38,7 +38,7 @@ channel's **Auto ready limit** (`max_auto_ready`).
 | Value | How |
 |---|---|
 | `draft` | Two captains pick players in turn, following **Teams picking order** (`abababba` by default) |
-| `matchmaking` | FragQ balances the teams by rating |
+| `matchmaking` | FragQ balances the teams by rating, or [Slipgate](../administration/slipgate.md#balance-teams-with-slipgate) does with **Balance teams with Slipgate** on |
 | `random teams` | Random teams |
 | `no teams` | Just a list of players |
 
@@ -105,7 +105,8 @@ Nothing is rated. When it ends, "Back to the lobby after the match" moves its pl
 ## Series
 
 With **Series length** above 1, one pickup plays several games on the game server before the queue opens
-again. This works on ranked and unranked queues.
+again. This works on ranked and unranked queues. The queue panel marks such a queue 🔁 *series of 3 games*
+before anyone adds.
 
 - The series starts when the match starts. While it's on, the queue is **closed to everyone**: adding is
   refused with *"2v2-pickup is held: series game 2 of 3 (match #123)"*, and the queue panel shows the queue
@@ -122,7 +123,8 @@ again. This works on ranked and unranked queues.
 The series ends, and the queue opens again, with the first of:
 
 - the last game's result;
-- `!endseries <queue>` or `/endseries` (moderators), or **End series** on the queue in the web panel;
+- `!endseries <queue>` or `/endseries` (moderators), the ⏹️ [moderator button](../queue-panel/moderators.md#end-series)
+  on the queue panel, or **End series** on the queue in the web panel;
 - the match being canceled (or, unranked, a moderator reporting it);
 - no result from the game server for the queue's **Match lifetime** (3 hours by default).
 

@@ -147,7 +147,7 @@ def member_dict(m):
 
 def queue_dict(q):
 	s = bot.series.of(q)
-	return dict(id=str(q.id), name=q.name, size=q.cfg.size, players=len(q.queue),
+	return dict(id=str(q.id), name=q.name, size=q.cfg.size, players=len(q.queue), designated_server=q.cfg.designated_server, paused=q.paused,
 				series=dict(match_id=s["match_id"], played=s["played"], length=s["length"], last=s["last"]) if s else None)
 
 
@@ -160,7 +160,9 @@ def channel_dict(qc, guild, acc):
 		category=channel.category.name if channel and channel.category else None,
 		queues=[queue_dict(q) for q in qc.queues],
 		panel=bool(bot.panel.message_id(qc)),
-		paused=qc.paused,
+		paused=qc.paused,                       # every queue paused
+		paused_queues=len(qc.paused_queues),
+		servers=[dict(address=row["address"], label=row.get("label")) for row in qc.cfg.servers or []],
 		perms=perm_list(acc.on(qc.id)),
 	)
 
@@ -282,10 +284,10 @@ def settings_dict():
 		steam=dict(
 			api_key_set=bool(key),
 			api_key_hint=key[-4:] if key else None,  # the key itself never leaves the server
-			require_link=bot.steam.required(),
 			linked=len(bot.steam.links),
 		),
 		fragdex=bot.fragdex.status(),
+		slipgate=bot.slipgate.status(),
 	)
 
 
@@ -318,13 +320,60 @@ async def api_settings_save(request):
 				return jerror(400, str(e), fields=dict(api_key=str(e)))
 		await bot.settings.put("steam_api_key", key)
 		log.info(f"WEBUI| {who} {'set' if key else 'removed'} the Steam API key.")
-	if "require_link" in steam:
-		await bot.settings.put("require_steam_link", bool(steam["require_link"]))
-		log.info(f"WEBUI| {who} turned {'on' if steam['require_link'] else 'off'} 'Require linked Steam IDs'.")
 	fdx = body.get("fragdex")
 	if isinstance(fdx, dict):
 		return await _save_fragdex(fdx, who)
+	sg = body.get("slipgate")
+	if isinstance(sg, dict):
+		return await _save_slipgate(sg, who)
 	return web.json_response(settings_dict())
+
+
+async def _save_slipgate(sg, who):
+	""" Slipgate: save (and test) the API key, or remove it. """
+	if sg.get("remove"):
+		for name in ("slipgate_key", "slipgate_ok"):
+			await bot.settings.put(name, bot.settings.DEFAULTS[name])
+		bot.slipgate.forget()
+		log.info(f"WEBUI| {who} removed the Slipgate API key.")
+		return web.json_response(settings_dict())
+	key = str(sg.get("api_key") or "").strip()
+	if not key:
+		msg = "Enter the API key."
+		return jerror(400, msg, fields=dict(api_key=msg))
+	if len(key) > 200 or not re.fullmatch(r"[!-~]+", key):
+		msg = "That doesn't look like a Slipgate API key (sg_…)."
+		return jerror(400, msg, fields=dict(api_key=msg))
+	if key != bot.slipgate.key():
+		await bot.settings.put("slipgate_key", key)
+		bot.slipgate.forget()
+		log.info(f"WEBUI| {who} saved a Slipgate API key.")
+	out = settings_dict()
+	try:
+		await bot.slipgate.test(key)
+	except bot.slipgate.SlipgateError as e:
+		out["slipgate"]["test_error"] = str(e)
+		return web.json_response(out)
+	await bot.slipgate.record_test(key)
+	return web.json_response(settings_dict())
+
+
+async def api_settings_slipgate_test(request):
+	""" Test the key in the form (empty = the saved one) without saving it. """
+	if err := owner_error(request):
+		return err
+	body = await read_json(request)
+	key = str(body.get("api_key") or "").strip() or bot.slipgate.key()
+	if not key:
+		return jerror(400, "Enter the API key.")
+	try:
+		await bot.slipgate.test(key)
+	except bot.slipgate.SlipgateError as e:
+		return jerror(400, str(e))
+	saved = key == bot.slipgate.key()
+	if saved:
+		await bot.slipgate.record_test(key)
+	return web.json_response(dict(ok=True, saved=saved, settings=settings_dict()))
 
 
 async def _save_fragdex(fdx, who):
@@ -821,7 +870,7 @@ def connector_dict(c, counts=None):
 		id=str(c["id"]), name=c["name"], game=c["game"], prefix=c["prefix"], state=bot.connectors.state(c),
 		queues=[str(q) for q in c["queues"] if q in live], unmatched_queue=str(c["unmatched_queue"] or ""),
 		can_results=c["can_results"], can_check=c["can_check"], can_link=c["can_link"], can_export=c["can_export"], can_voice=c["can_voice"],
-		allowed_ips=c["allowed_ips"].split() if c["allowed_ips"] else [], rate_limit=c["rate_limit"], expires_at=c["expires_at"],
+		slipgate_details=c["slipgate_details"], allowed_ips=c["allowed_ips"].split() if c["allowed_ips"] else [], rate_limit=c["rate_limit"], expires_at=c["expires_at"],
 		disabled=c["disabled"], requests=c["requests"], last_used_at=c["last_used_at"], last_used_ip=c["last_used_ip"],
 		last_denied_at=c["last_denied_at"], last_denied_ip=c["last_denied_ip"], last_denied_reason=c["last_denied_reason"],
 		created_at=c["created_at"], created_by=c["created_by_name"], results=n, last_result_at=last,
@@ -1126,13 +1175,14 @@ async def api_panel_delete(request):
 	return web.json_response(dict(ok=True, panel=False))
 
 
-async def api_pause(request):
-	qc, guild, acc = get_qc(request, "pause")
+async def api_queue_pause(request):
+	""" Pause or resume one queue (each queue has its own pause). """
+	q, qc, guild, acc = get_queue(request, "pause")
 	body = await read_json(request)
 	paused = bool(body.get("paused"))
-	await qc.set_paused(paused)
+	await q.set_paused(paused)
 	await bot.panel.refresh(qc, force=True)
-	log.info(f"WEBUI| {request['user']['name']} {'paused' if paused else 'resumed'} the queues in #{qc.cfg.cfg_info.get('channel_name', qc.id)}.")
+	log.info(f"WEBUI| {request['user']['name']} {'paused' if paused else 'resumed'} queue {q.name} in #{qc.cfg.cfg_info.get('channel_name', qc.id)}.")
 	return web.json_response(dict(ok=True, paused=paused))
 
 
@@ -1218,12 +1268,29 @@ async def api_matches(request):
 	except ValueError:
 		limit = 50
 	matches = await _matches(qc, limit=limit)
+	slipgate = await _slipgate_links(qc, {m['match_id'] for m in matches})
 	return web.json_response(dict(matches=[dict(
 		id=m['match_id'], queue=m['queue_name'], at=m['at'], ranked=bool(m['ranked']),
 		winner=m['winner'], alpha=m['alpha_name'], beta=m['beta_name'],
 		alpha_score=m['alpha_score'], beta_score=m['beta_score'], maps=m['maps'],
 		players=[dict(user_id=str(p['user_id']), nick=p['nick'], team=p['team']) for p in m['players']],
+		slipgate=slipgate.get(m['match_id']),
 	) for m in matches]))
+
+
+async def _slipgate_links(qc, match_ids):
+	""" {match id: Slipgate match page} for matches whose game server result was found on Slipgate. """
+	out = {}
+	for r in await db.select(["match_id", "slipgate"], "fragq_match_results", where=dict(channel_id=qc.id)):
+		s = r.get("slipgate")
+		if isinstance(s, str):
+			try:
+				s = json.loads(s)
+			except ValueError:
+				s = None
+		if r.get("match_id") in match_ids and isinstance(s, dict) and s.get("url"):
+			out[r["match_id"]] = s["url"]
+	return out
 
 
 async def api_stats_csv(request):
@@ -1272,12 +1339,34 @@ async def api_queue_save(request):
 		new = str(values["name"] or "").strip()
 		if new.lower() != q.name.lower() and new.lower() in (i.name.lower() for i in qc.queues):
 			return jerror(400, "Some fields are invalid.", fields=dict(name="A queue with this name already exists."))
+	if err := _slipgate_limits_error(q, values):
+		return err
 	try:
 		await schema.apply(q.cfg, values, guild)
 	except schema.ConfigError as e:
 		return jerror(400, "Some fields are invalid.", fields=e.errors)
 	log.info(f"WEBUI| {request['user']['name']} updated queue {q.name} config: {', '.join(values)}.")
 	return web.json_response(dict(queue_dict(q), values=schema.ui_values(q.cfg)))
+
+
+def _slipgate_limits_error(q, values):
+	""" The queue's Slipgate minimum rating above its maximum (after this save): a 400 for both fields, else None. """
+	if not isinstance(values, dict):
+		return None
+
+	def limit(name):
+		if name not in values:
+			return getattr(q.cfg, name)
+		try:
+			return int(str(values[name]).strip()) if values[name] not in (None, "") else None
+		except ValueError:
+			return None   # not a number: the normal checks report it
+
+	lo, hi = limit("slipgate_min_rating"), limit("slipgate_max_rating")
+	if lo is not None and hi is not None and lo > hi:
+		msg = f"The minimum Slipgate rating ({lo}) is above the maximum ({hi})."
+		return jerror(400, "Some fields are invalid.", fields=dict(slipgate_min_rating=msg, slipgate_max_rating=msg))
+	return None
 
 
 async def api_queue_reset(request):
@@ -1349,6 +1438,7 @@ def make_app():
 	r.add_put("/api/settings", api_settings_save)
 	r.add_post("/api/settings/steam/test", api_settings_steam_test)
 	r.add_post("/api/settings/fragdex/test", api_settings_fragdex_test)
+	r.add_post("/api/settings/slipgate/test", api_settings_slipgate_test)
 	r.add_get("/api/settings/backup", api_backup)
 	r.add_post("/api/settings/restore", api_restore)
 	r.add_get("/api/steam/links", api_steam_links)
@@ -1377,7 +1467,6 @@ def make_app():
 	r.add_get("/api/channels/{channel_id}/live", api_channel_live)
 	r.add_post("/api/channels/{channel_id}/panel", api_panel_post)
 	r.add_delete("/api/channels/{channel_id}/panel", api_panel_delete)
-	r.add_post("/api/channels/{channel_id}/pause", api_pause)
 	r.add_get("/api/channels/{channel_id}/leaderboard", api_leaderboard)
 	r.add_get("/api/channels/{channel_id}/matches", api_matches)
 	r.add_get("/api/channels/{channel_id}/stats/{kind}.csv", api_stats_csv)
@@ -1387,6 +1476,7 @@ def make_app():
 	r.add_delete("/api/channels/{channel_id}/queues/{queue_id}", api_queue_delete)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/reset/{var}", api_queue_reset)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/clear", api_queue_clear)
+	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/pause", api_queue_pause)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/endseries", api_queue_end_series)
 	r.add_get("/api/channels/{channel_id}/queues/{queue_id}/export", api_queue_export)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/duplicate", api_queue_duplicate)

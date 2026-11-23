@@ -170,3 +170,12 @@ class SafeTemplateDict(dict):
 	""" returns {key} for missing keys, useful for string.format_map() """
 	def __missing__(self, key):
 		return '{'+key+'}'
+
+
+SERVER_ADDRESS_RE = re.compile(r"(?=[^:]{1,100}:)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?:(\d{1,5})\Z")
+
+
+def valid_server_address(address) -> bool:
+	""" A game server address: IP or host name, a colon and a port (1-65535), such as 131.153.224.87:27970. """
+	m = SERVER_ADDRESS_RE.match(str(address or "").strip())
+	return bool(m) and 1 <= int(m.group(1)) <= 65535

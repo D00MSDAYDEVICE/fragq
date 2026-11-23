@@ -459,6 +459,13 @@ async def _steam(
 ): await run_slash(bot.commands.steam, interaction=interaction, steam=steam)
 
 
+@dc.slash_command(name='slipgate', description="Show a player's Slipgate ratings (by their linked Steam account).", **guild_kwargs)
+async def _slipgate(
+	interaction: Interaction,
+	player: Member = SlashOption(required=False, verify=False),
+): await run_slash(bot.commands.slipgate, interaction=interaction, player=player)
+
+
 @dc.slash_command(name='who', description='List added players.', **guild_kwargs)
 async def _who(
 	interaction: Interaction,

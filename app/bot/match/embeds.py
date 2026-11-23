@@ -158,6 +158,8 @@ class Embeds:
 			team_players[1] += "\n\u200b"  # Extra empty line
 			embed.add_field(name=teams_names[0], value=team_players[0], inline=False)
 			embed.add_field(name=teams_names[1], value=team_players[1], inline=False)
+			if line := bot.slipgate.balance_line(self.m):
+				embed.add_field(name="\u2696\ufe0f " + self.m.gt("Balance"), value=line, inline=False)
 			if self.m.ranked or self.m.cfg['pick_captains']:
 				embed.add_field(
 					name=self.m.gt("Captains"),
@@ -185,7 +187,8 @@ class Embeds:
 				inline=True
 			)
 		if self.m.cfg['server']:
-			embed.add_field(name=self.m.qc.gt("Server"), value=f"`{self.m.cfg['server']}`", inline=True)
+			lines = [x.strip() for x in self.m.cfg['server'].splitlines() if x.strip()]  # designated server + Server text
+			embed.add_field(name=self.m.qc.gt("Server"), value="\n".join(f"`{x}`" for x in lines)[:1024], inline=True)
 
 		if self.m.cfg['start_msg']:
 			embed.add_field(name="—", value=self.m.cfg['start_msg'] + "\n\u200b", inline=False)
@@ -268,6 +271,8 @@ class Embeds:
 				]
 				embed.add_field(name=title, value="\n".join(lines) or "—", inline=True)
 			embed.add_field(name="​", value="​", inline=True)  # keeps the two teams on their own row
+			if line := bot.slipgate.balance_line(m):
+				embed.add_field(name="⚖️ " + m.gt("Balance"), value=line, inline=False)
 		else:  # no teams: players in two columns
 			players = [self._modern_player(p, show_ranks) for p in m.players]
 			half = (len(players) + 1) // 2

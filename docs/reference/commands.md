@@ -22,6 +22,7 @@ command and as a slash command. Chat commands start with the channel's prefix, `
 | | `/expire_default` | everyone | Show or set the timer you get each time you join |
 | `!allow_offline`, `!ao` | `/allow_offline` | everyone | Stay in the queues while offline, until your next match |
 | `!steam [id]`, `!link_steam`, `!steamid` | `/steam` | everyone | **FragQ** Link your Steam account, or show the linked one. Changing it needs a moderator's approval. See [Linking Steam](../playing/steam.md). |
+| `!slipgate [player]`, `!sg` | `/slipgate` | everyone | **FragQ** A player's [Slipgate](../administration/slipgate.md) ratings, by their linked Steam account. |
 
 Joining is refused while the channel is [paused](../queue-panel/moderators.md#pause-queue).
 

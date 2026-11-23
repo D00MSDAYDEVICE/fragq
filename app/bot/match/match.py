@@ -31,7 +31,8 @@ class Match:
 		team_size=1, pick_captains="no captains", captains_role_id=None, pick_teams="draft",
 		pick_order=None, maps=[], vote_maps=0, map_count=0, check_in_timeout=0,
 		check_in_discard=True, check_in_discard_immediately=True, match_lifetime=3*60*60, start_msg=None, server=None,
-		show_streamers=True, hold_time=0, series_length=1
+		show_streamers=True, hold_time=0, series_length=1, slipgate_game_type=None, slipgate_balance=False,
+		slipgate_ladder="standard"
 	)
 
 	class Team(list):
@@ -58,6 +59,9 @@ class Match:
 
 	@classmethod
 	async def new(cls, ctx, queue, players, **kwargs):
+		# Ranked: players new to the channel's ratings may start at their Slipgate rating (bot.slipgate)
+		if kwargs.get('ranked') and kwargs.get('pick_teams') != 'no teams':
+			await bot.slipgate.seed_ratings(ctx.qc, players, kwargs.get('slipgate_game_type'), kwargs.get('slipgate_ladder'))
 		# Create the Match object
 		ratings = {p['user_id']: p['rating'] for p in await ctx.qc.rating.get_players((p.id for p in players))}
 		match_id = await bot.stats.next_match()
@@ -65,6 +69,7 @@ class Match:
 		# Prepare the Match object
 		match.maps = match.random_maps(match.cfg['maps'], match.cfg['map_count'], queue.last_maps)
 		match.init_captains(match.cfg['pick_captains'], match.cfg['captains_role_id'])
+		match.balance = await bot.slipgate.balance_match(match)
 		match.init_teams(match.cfg['pick_teams'])
 		if match.ranked or match.held:
 			match.states.append(match.WAITING_REPORT)
@@ -99,7 +104,8 @@ class Match:
 			state=self.state,
 			states=self.states,
 			ready_players=[p.id for p in self.check_in.ready_players if p],
-			hold_until=self.hold_until
+			hold_until=self.hold_until,
+			balance=self.balance
 		)
 
 	@classmethod
@@ -133,6 +139,7 @@ class Match:
 		match.state = data['state']
 		match.states = data['states']
 		match.hold_until = data.get('hold_until')
+		match.balance = data.get('balance')
 		bot.series.match_renumbered(queue, data['match_id'], match.id)
 		if match.state == match.CHECK_IN:
 			ctx = bot.SystemContext(qc)
@@ -159,6 +166,7 @@ class Match:
 		# elsewhere) until its result comes in, the hold time is up, or its series ends (bot.series).
 		self.held = not self.ranked and bool(self.cfg['hold_time'] or (self.cfg['series_length'] or 1) > 1)
 		self.hold_until = None
+		self.balance = None  # how the teams were balanced, when the queue balances with Slipgate (bot.slipgate)
 		self.players = list(players)
 		self.ratings = ratings
 		self.winner = None
@@ -220,6 +228,11 @@ class Match:
 			self.teams[0].set(self.captains[:1])
 			self.teams[1].set(self.captains[1:])
 			self.teams[2].set([p for p in self.players if p not in self.captains])
+		elif pick_teams == "matchmaking" and self.balance and self.balance.get("source") == "slipgate":
+			by_id = {p.id: p for p in self.players}
+			for team, ids in zip(self.teams[:2], self.balance["teams"]):
+				team.set(self.sort_players([by_id[uid] for uid in ids]))
+			self.teams[2].set([p for p in self.players if p not in [*self.teams[0], *self.teams[1]]])
 		elif pick_teams == "matchmaking":
 			team_len = min(self.cfg['team_size'], int(len(self.players)/2))
 			best_rating = sum(self.ratings.values())/2

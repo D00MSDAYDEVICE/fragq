@@ -14,7 +14,7 @@ import re
 
 from core.cfg_factory import (
 	Variable, StrVar, EmojiVar, TextVar, OptionVar, BoolVar, IntVar, SliderVar, RoleVar, MemberVar,
-	TextChanVar, VoiceChanVar, DurationVar, VariableTable
+	TextChanVar, VoiceChanVar, DurationVar, VariableTable, ServerVar
 )
 
 TYPE_NAMES = [
@@ -22,6 +22,7 @@ TYPE_NAMES = [
 	(VariableTable, 'table'),
 	(SliderVar, 'slider'),
 	(EmojiVar, 'emoji'),
+	(ServerVar, 'server'),
 	(StrVar, 'str'),
 	(TextVar, 'text'),
 	(OptionVar, 'option'),
@@ -170,6 +171,8 @@ async def check(factory, data: dict, guild) -> dict:
 			errors[key] = "Unknown variable."
 			continue
 		try:
+			if value is None and v.notnull and v.default is not None and not isinstance(v, VariableTable):
+				value = _default(v)   # an empty value where one is required (hand-edited or older files): the default
 			inputs[key] = to_input(v, value)
 			obj = await v.wrap(await v.validate(inputs[key], guild), guild)
 			v.verify(obj)

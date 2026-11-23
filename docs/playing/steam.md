@@ -61,8 +61,8 @@ own shows a pending change. To withdraw it, run `!steam` with your current accou
 
 ## When FragQ asks
 
-If the bot owner turned on **Require Linked Steam IDs**, FragQ asks for your Steam ID the first time
-you join a queue:
+If a queue has **Require linked Steam IDs** on, FragQ asks for your Steam ID the first time you join
+it:
 
 - From the **Join** button or `/add`: a pop-up form appears. Paste your Steam ID or profile link and
   submit; FragQ links it and adds you to the queue straight away.

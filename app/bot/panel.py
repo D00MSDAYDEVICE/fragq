@@ -4,18 +4,22 @@ Queue panel: a message with one Join button per queue and a Leave button, kept u
 players add and remove. Buttons run the same code as the /add and /remove commands.
 
 Moderators also get Add Player (pick a queue and members, works while paused) and Pause Queue, which
-stops Join / !add / ++ for the channel until it is pressed again.
+stops Join / !add / ++ for a queue until it is resumed. Each queue has its own pause (PickupQueue.paused): on a
+channel with one queue the button toggles it, with several it opens a menu of the queues plus "all queues";
+the panel turns amber only when every queue is paused. On a channel with a series queue
+(Series length above 1) there is also End Series, which asks for confirmation (and which series, if several run).
 
 Players' profile pictures are shown as a row of avatars (bot.avatars) at the bottom of the embed,
 right above the buttons.
 
 A player joining a queue posts the panel if the channel has none, or moves it below the newest messages
-(like Move panel down). With the channel's panel_autorefresh set, a panel buried by chat is also moved
+(like Refresh Panel). With the channel's panel_autorefresh set, a panel buried by chat is also moved
 back down every that many minutes.
 
 The panel's message id is kept in the channel's cfg_info, so it survives restarts. Presses are routed by
 custom_id ("fragq:add:<queue_id>", "fragq:remove", "fragq:pause", "fragq:mod_add", the selects
-"fragq:mod_queue" / "fragq:mod_users:<queue_id>", "fragq:steam_prompt:<queues>" and the Steam ID form
+"fragq:mod_queue" / "fragq:mod_users:<queue_id>", "fragq:pause_pick", End Series "fragq:series_end" with "fragq:series_pick",
+"fragq:series_yes:<queue_id>:<match_id>" and "fragq:series_no", "fragq:steam_prompt:<queues>" and the Steam ID form
 "fragq:steam_link:<queues>"), so no view registration is needed.
 """
 import io
@@ -57,7 +61,7 @@ def build(qc):
 	guild = dc.get_guild(qc.guild_id)
 	channel = dc.get_channel(qc.id)
 	queues = qc.queues[:MAX_QUEUES]
-	paused = qc.paused
+	paused = qc.paused   # every queue paused: the whole panel shows it; otherwise each paused queue does
 
 	if paused:
 		description = "⏸️ **" + qc.gt("Queue paused") + "**: " + qc.gt("joining is disabled for now. Moderators can still add players.")
@@ -76,10 +80,16 @@ def build(qc):
 	for q in queues:
 		n, size = len(q.queue), q.cfg.size
 		title = f"{q.name} · {n}/{size}" + (" · ⭐ ranked" if q.cfg.ranked else "")
+		if bot.series.length(q) > 1:
+			title += " · 🔁 " + qc.gt("series of {n} games").format(n=bot.series.length(q))
+		if limit := bot.slipgate.limits_text(q):   # Slipgate rating limit
+			title += f" · 🎯 {limit}"
 		players = " · ".join(f"`{get_nick(m)}`" for m in q.queue) or "*" + qc.gt("waiting for players") + "*"
 		if bot.series.of(q):
 			title = f"🔒 {q.name} · " + qc.gt("held") + (" · ⭐ ranked" if q.cfg.ranked else "")
 			players = "*" + bot.series.text(q) + "*"
+		elif q.paused:
+			title = f"⏸️ {q.name} · {n}/{size} · " + qc.gt("paused") + (" · ⭐ ranked" if q.cfg.ranked else "")
 		value = f"`{_bar(n, size)}`\n{players}"
 		embed.add_field(name=title, value=value[:1024], inline=False)
 
@@ -93,17 +103,23 @@ def build(qc):
 		embed.add_field(name="⚔️ " + qc.gt("Matches in progress"), value="\n".join(lines), inline=False)
 
 	footer = qc.gt("Updates live · or type {add} / {remove}").format(add=f"{qc.cfg.prefix}add", remove=f"{qc.cfg.prefix}remove")
+	series_button = _has_series(qc)
 	if qc.cfg.panel_mod_buttons:  # the moderator buttons are icon-only, so say what they do
+		several = len(queues) > 1
 		footer += "\n" + qc.gt("Moderators: 👤 add player · {icon} {action}").format(
-			icon="▶️" if paused else "⏸️", action=qc.gt("resume queue") if paused else qc.gt("pause queue")
+			icon="▶️" if paused else "⏸️",
+			action=(qc.gt("resume queues") if several else qc.gt("resume queue")) if paused
+			else (qc.gt("pause queues") if several else qc.gt("pause queue"))
 		)
+		if series_button:
+			footer += " · ⏹️ " + qc.gt("end series")
 	embed.set_footer(text=footer)
 
 	# Presses are answered by on_component(); auto_defer would race it and answer first.
 	view = View(timeout=None, auto_defer=False)
 	joins = []
 	for q in queues:
-		closed = paused or len(q.queue) >= q.cfg.size or bool(bot.series.of(q))
+		closed = q.paused or len(q.queue) >= q.cfg.size or bool(bot.series.of(q))
 		joins.append(Button(
 			style=ButtonStyle.secondary if closed else ButtonStyle.success,
 			label=(qc.gt("Join") + " " + q.name)[:80] if len(queues) > 1 else qc.gt("Join"),
@@ -121,6 +137,11 @@ def build(qc):
 			emoji="▶️" if paused else "⏸️",
 			custom_id=f"{PREFIX}pause",
 		))
+		if series_button:
+			group.append(Button(
+				style=ButtonStyle.secondary, emoji="⏹️", custom_id=f"{PREFIX}series_end",
+				disabled=not _running_series(qc),
+			))
 	for i, item in enumerate(joins):
 		item.row = i // 5
 		view.add_item(item)
@@ -135,7 +156,8 @@ def build(qc):
 def _signature(qc):
 	return (
 		qc.cfg.prefix, qc.paused, qc.cfg.panel_mod_buttons, bot.avatars.signature(qc),
-		tuple((q.id, q.name, q.cfg.size, q.cfg.ranked, tuple(m.id for m in q.queue), str(bot.series.of(q))) for q in qc.queues),
+		tuple((q.id, q.name, q.cfg.size, q.cfg.ranked, q.paused, bot.slipgate.limits_text(q), bot.series.length(q), tuple(m.id for m in q.queue), str(bot.series.of(q)))
+			for q in qc.queues),
 		tuple((m.id, m.state, int((time.time() - m.start_time) // 60)) for m in bot.active_matches if m.qc is qc),
 	)
 
@@ -284,6 +306,9 @@ async def think(frame_time):
 	if not _migrated or bot.settings.get("panel_autorepost"):  # also after restoring an old backup
 		await _migrate()
 	for qc in list(bot.queue_channels.values()):
+		if qc.legacy_paused:   # paused the FragQ 1.4 way (the whole channel): pause each of its queues instead
+			await qc.migrate_pause()
+	for qc in list(bot.queue_channels.values()):
 		st = _state.get(qc.id)
 		if st and st.get("added") and frame_time - st["added"] >= ADD_DELAY:
 			st["added"] = None
@@ -360,11 +385,44 @@ async def _run(ctx, coro, **kwargs):
 # ------------------------------------------------------------------ moderator buttons
 
 async def _toggle_pause(ctx):
+	""" Pause button: one queue on the channel is paused or resumed at once; with several, pick which. """
 	ctx.check_perms(ctx.Perms.MODERATOR)
 	qc = ctx.qc
-	await qc.set_paused(not qc.paused)
-	log.info(f"{get_nick(ctx.author)} {'paused' if qc.paused else 'resumed'} the queues in #{ctx.interaction.channel.name}.")
-	await ctx._ack()
+	if len(qc.queues) <= 1:
+		await qc.set_paused(not qc.paused)
+		log.info(f"{get_nick(ctx.author)} {'paused' if qc.paused else 'resumed'} the queues in #{ctx.interaction.channel.name}.")
+		await ctx._ack()
+		await refresh(qc, force=True)
+		return
+	view = View(timeout=None, auto_defer=False)
+	options = [
+		SelectOption(label=(qc.gt("Resume {queue}") if q.paused else qc.gt("Pause {queue}")).format(queue=q.name)[:100],
+					 value=f"q:{q.id}", emoji="▶️" if q.paused else "⏸️",
+					 description=(qc.gt("paused") if q.paused else qc.gt("open")) + f" · {len(q.queue)}/{q.cfg.size}")
+		for q in qc.queues[:23]
+	]
+	options.append(SelectOption(label=qc.gt("Pause all queues"), value="all:1", emoji="⏸️"))
+	options.append(SelectOption(label=qc.gt("Resume all queues"), value="all:0", emoji="▶️"))
+	view.add_item(StringSelect(custom_id=f"{PREFIX}pause_pick", placeholder=qc.gt("Pause or resume a queue"), options=options))
+	await ctx.interaction.response.send_message(content=qc.gt("Which queue should be paused or resumed?"), view=view, ephemeral=True)
+
+
+async def _pause_pick(ctx):
+	""" A queue (or all of them) picked from the Pause button's menu. """
+	ctx.check_perms(ctx.Perms.MODERATOR)
+	qc = ctx.qc
+	kind, _, arg = ((ctx.interaction.data.get("values") or [""])[0]).partition(":")
+	if kind == "all":
+		now_paused = arg == "1"
+		await qc.set_paused(now_paused)
+		text = qc.gt("All queues are paused.") if now_paused else qc.gt("All queues are open again.")
+	else:
+		q = _find_queue(qc, arg)
+		now_paused = not q.paused
+		await q.set_paused(now_paused)
+		text = (qc.gt("**{queue}** is paused.") if now_paused else qc.gt("**{queue}** is open again.")).format(queue=q.name)
+	log.info(f"{get_nick(ctx.author)} on #{ctx.interaction.channel.name}: {text}")
+	await ctx.interaction.response.edit_message(content=("⏸️ " if now_paused else "▶️ ") + text, view=None)
 	await refresh(qc, force=True)
 
 
@@ -472,6 +530,75 @@ async def _mod_users(ctx, qid):
 	await interaction.edit_original_message(content="\n".join(lines) or qc.gt("Action had no effect."), view=None)
 
 
+def _has_series(qc):
+	""" Show End Series: a queue of the channel plays series, or still has one going. """
+	return any(bot.series.length(q) > 1 or bot.series.of(q) for q in qc.queues)
+
+
+def _running_series(qc):
+	return [q for q in qc.queues if bot.series.of(q)]
+
+
+def _series_confirm(qc, q):
+	s = bot.series.of(q)
+	text = "⏹️ " + qc.gt("End the series of **{queue}** now? {played} of {total} games played (match #{id}). "
+		"The queue opens again.").format(queue=q.name, played=s["played"], total=s["length"], id=s["match_id"])
+	view = View(timeout=None, auto_defer=False)
+	view.add_item(Button(style=ButtonStyle.danger, label=qc.gt("End series"), custom_id=f"{PREFIX}series_yes:{q.id}:{s['match_id']}"))
+	view.add_item(Button(style=ButtonStyle.secondary, label=qc.gt("Cancel"), custom_id=f"{PREFIX}series_no"))
+	return text, view
+
+
+async def _series_end(ctx):
+	""" End Series button: pick the series (if several are running), then confirm. """
+	ctx.check_perms(ctx.Perms.MODERATOR)
+	running = _running_series(ctx.qc)[:25]
+	if not running:
+		raise bot.Exc.NotFoundError(ctx.qc.gt("No series in progress on this channel."))
+	if len(running) == 1:
+		text, view = _series_confirm(ctx.qc, running[0])
+	else:
+		view = View(timeout=None, auto_defer=False)
+		view.add_item(StringSelect(
+			custom_id=f"{PREFIX}series_pick",
+			placeholder=ctx.qc.gt("Select the series to end"),
+			options=[SelectOption(label=q.name[:100], value=str(q.id), description=bot.series.text(q)[:100]) for q in running],
+		))
+		text = ctx.qc.gt("Which series should end?")
+	await ctx.interaction.response.send_message(content=text, view=view, ephemeral=True)
+
+
+async def _series_pick(ctx):
+	ctx.check_perms(ctx.Perms.MODERATOR)
+	q = _find_queue(ctx.qc, (ctx.interaction.data.get("values") or [None])[0])
+	if not bot.series.of(q):
+		await ctx.interaction.response.edit_message(
+			content=ctx.qc.gt("**{queue}** has no series in progress.").format(queue=q.name), view=None)
+		return
+	text, view = _series_confirm(ctx.qc, q)
+	await ctx.interaction.response.edit_message(content=text, view=view)
+
+
+async def _series_yes(ctx, arg):
+	""" Confirmed: end the series, unless it already ended (or another one started) meanwhile. """
+	ctx.check_perms(ctx.Perms.MODERATOR)
+	qid, _, match_id = arg.partition(":")
+	q = _find_queue(ctx.qc, qid)
+	s = bot.series.of(q)
+	if not s or str(s["match_id"]) != match_id:
+		await ctx.interaction.response.edit_message(
+			content=ctx.qc.gt("This series is already over."), view=None)
+		return
+	await ctx.interaction.response.edit_message(
+		content="✅ " + ctx.qc.gt("Series of **{queue}** ended.").format(queue=q.name), view=None)
+	log.info(f"{get_nick(ctx.author)} ended the series of {q.name} from the queue panel.")
+	await bot.series.end(q, ctx.qc.gt("ended by {player}").format(player=get_nick(ctx.author)), ctx)
+
+
+async def _series_no(ctx):
+	await ctx.interaction.response.edit_message(content=ctx.qc.gt("The series goes on."), view=None)
+
+
 async def on_component(interaction: Interaction) -> bool:
 	""" Handle a FragQ button press. Returns False if the interaction isn't ours. """
 	custom_id = (interaction.data or {}).get("custom_id", "")
@@ -504,12 +631,22 @@ async def on_component(interaction: Interaction) -> bool:
 		task = _run(ctx, bot.commands.remove)
 	elif action == "pause":
 		task = _run(ctx, _toggle_pause)
+	elif action == "pause_pick":
+		task = _run(ctx, _pause_pick)
 	elif action == "mod_add":
 		task = _run(ctx, _mod_add)
 	elif action == "mod_queue":
 		task = _run(ctx, _mod_queue)
 	elif action == "mod_users":
 		task = _run(ctx, _mod_users, qid=arg)
+	elif action == "series_end":
+		task = _run(ctx, _series_end)
+	elif action == "series_pick":
+		task = _run(ctx, _series_pick)
+	elif action == "series_yes":
+		task = _run(ctx, _series_yes, arg=arg)
+	elif action == "series_no":
+		task = _run(ctx, _series_no)
 	elif action == "steam_prompt":
 		await interaction.response.send_modal(bot.steam.link_modal(arg or None))
 		return True

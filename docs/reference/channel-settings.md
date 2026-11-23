@@ -40,7 +40,7 @@ Durations are written like `1h 30m`, `45m` or `00:15:00`. Roles and channels are
 | Match start message | `match_embed_style` | choice | `modern` | Layout of the message posted when a match starts:<br>modern - FragQ layout: teams side by side, numbered maps, tidy server list<br>classic - the original PUBobot2 layout |
 | Ping players on match start | `match_ping` | on / off | `on` | Mention the players above the match message. Mentions inside an embed don't notify anyone (modern layout only). |
 | Keep queue panel at the bottom | `panel_repost` | on / off | `on` | Re-post the queue panel (Join/Leave buttons) below the match message whenever a match starts, so it doesn't get buried. |
-| Moderator buttons on queue panel | `panel_mod_buttons` | on / off | `on` | Show Add Player and Pause Queue on the queue panel. Everyone can see them, only the moderator and admin roles can use them. |
+| Moderator buttons on queue panel | `panel_mod_buttons` | on / off | `on` | Show Add Player, Pause Queue and (on a channel with a series queue) End Series on the queue panel. Everyone can see them, only the moderator and admin roles can use them. |
 
 ## Rating
 
@@ -49,6 +49,7 @@ Durations are written like `1h 30m`, `45m` or `00:15:00`. Roles and channels are
 | Rating system | `rating_system` | choice | `TrueSkill` | Set player's rating calculation method. Options: `flat`, `Glicko2`, `TrueSkill`. |
 | Rating host channel | `rating_channel` | channel | not set | Use rating data from another channel. |
 | Initial rating | `rating_initial` | number | `1500` | Set player's initial rating. |
+| Start new players at their Slipgate rating | `slipgate_seed` | on / off | `off` | Needs a Slipgate API key on the Settings page. When a ranked match starts on a queue with a Slipgate game type, players who have no rating here yet start from their place on that game type's Slipgate ladder instead of the initial rating: the middle of the ladder is the initial rating, and a top player starts about two deviations above it.<br>Once per player, recorded in their rating history. Players who aren't linked to Steam, or are unknown to Slipgate, start at the initial rating as before. |
 | Initial deviation | `rating_deviation` | number | `200` | Set player's initial rating deviation. |
 | Minimum deviation | `rating_min_deviation` | number | `75` | Set players minimum deviation value. If not set, rating changes may seek to 0 over time. |
 | Rating scale | `rating_scale` | percent | not set | Scale all rating changes, 100% = x1. |
@@ -82,3 +83,12 @@ Durations are written like `1h 30m`, `45m` or `00:15:00`. Roles and channels are
 | 〈B〉 | 1800 | – |
 | 〈A〉 | 1900 | – |
 | 〈★〉 | 2000 | – |
+
+## Servers
+
+| Setting | Variable | Type | Default | Description |
+|---|---|---|---|---|
+| Server list | `servers` | table | empty | Game servers of this channel, as IP:port, each with an optional label (shown in the web panel only, to tell them apart). A queue can designate one of them for its matches. |
+
+**Server list** (`servers`) is a table with the columns `address`, `label`.
+Game servers of this channel, as IP:port, each with an optional label (shown in the web panel only, to tell them apart). A queue can designate one of them for its matches.

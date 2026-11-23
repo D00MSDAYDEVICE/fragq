@@ -23,16 +23,19 @@ DEFAULTS = dict(
 	panel_autorepost=False,         # FragQ 1.0.0 only: now the channel setting panel_autorefresh (bot.panel._migrate)
 	panel_autorepost_minutes=5,
 	steam_api_key="",
-	require_steam_link=False,
+	require_steam_link=False,       # up to FragQ 1.4 only: now the queue setting require_steam_link (bot.steam.migrate_required)
 	fragdex_url="",          # Fragdex lookups (bot.fragdex): the address, a Fragdex API key,
 	fragdex_key="",
 	fragdex_ok={},           # which address and key passed the last test,
 	fragdex_lookup=False,    # and the switch, off until the owner turns it on
+	slipgate_key="",         # Slipgate (bot.slipgate): the owner's Slipgate API key (sg_...),
+	slipgate_ok={},          # and which key passed the last test
 )
 # Restored by the Settings page backup; the API key only when the backup includes it.
-BACKUP = ("require_steam_link", "fragdex_url")
-# Still read from FragQ 1.0.0 backups: turned into each channel's panel_autorefresh after the restore.
-LEGACY = ("panel_autorepost", "panel_autorepost_minutes")
+BACKUP = ("fragdex_url",)
+# Still read from older backups: turned into each channel's panel_autorefresh (1.0.0) and each queue's
+# require_steam_link (up to 1.4) after the restore.
+LEGACY = ("panel_autorepost", "panel_autorepost_minutes", "require_steam_link")
 
 _values = dict(DEFAULTS)
 

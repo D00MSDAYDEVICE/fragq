@@ -284,6 +284,25 @@ button { font: inherit; }
 
 .main { overflow-y: auto; min-width: 0; position: relative; }
 .main-inner { max-width: 1060px; margin: 0 auto; padding: 30px 30px 120px; }
+.server-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; max-width: 900px; }
+.server-row { display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 220px) minmax(0, 1fr) auto auto; gap: 10px; align-items: center; }
+.server-row input:disabled { opacity: 1; color: var(--text); background: transparent; cursor: default; }
+.server-row .icon-btn.on { color: var(--accent-text); }
+@media (max-width: 760px) { .server-row { grid-template-columns: minmax(0, 1fr) auto auto; } .server-row .server-used { grid-column: 1 / -1; } }
+.server-row input.bad { border-color: var(--danger, #e5484d); }
+.server-used { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, auto); }
+/* both fields share the rows (title, control, text, error), so the two controls line up even when a title wraps */
+.field-pair > .field { display: grid; grid-template-rows: subgrid; grid-row: span 4; align-content: start; }
+.field-pair > .field > .f-desc { margin-top: 8px; }
+@media (max-width: 900px) { .field-pair { grid-template-rows: none; } .field-pair > .field { display: block; } }
+.field-pair > .field + .field { border-left: 1px solid var(--border); }
+@media (max-width: 900px) { .field-pair { grid-template-columns: 1fr; } .field-pair > .field + .field { border-left: 0; } }
+.sg-link { margin-left: 4px; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.main-inner.wide { max-width: 1800px; padding: 24px 28px 64px; }   /* Settings: two columns of panels */
+/* No server picked: no channel column (app.js renderTree) */
+.no-tree .shell { grid-template-columns: 76px minmax(0, 1fr); }
+.no-tree .tree, .no-tree .nav-toggle { display: none !important; }
 
 /* ------------------------------------------------------------ controls */
 .btn {
@@ -307,6 +326,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, .seg button:f
 .btn-danger.solid { background: var(--danger); color: #fff; border-color: var(--danger); }
 .btn-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); background: var(--warn-soft); }
 .btn-warn:hover { border-color: var(--warn); background: var(--warn-soft); }
+.btn-outline-ok { border-color: color-mix(in srgb, var(--accent) 65%, transparent); }   /* thin green outline, no fill */
+.btn-outline-ok:hover { border-color: var(--accent); }
+.q-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 16px; }   /* queue page: pause and panel, above the tabs */
 .btn-sm { height: 30px; padding: 0 11px; font-size: 12.5px; }
 .btn-ghost { border-color: transparent; color: var(--muted); }
 .btn-ghost:hover { color: var(--text); }
@@ -636,8 +658,11 @@ input[type=date] { height: 38px; padding: 0 11px; border: 1px solid var(--border
   .whoami .nm, .botpill .st { display: none; }
   .botpill { padding: 0 5px; }
 }
+@media (min-width: 1001px) and (max-width: 1180px) {  /* without the channel column two columns still fit */
+  .no-tree .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 900px) {
-  .shell { grid-template-columns: 68px minmax(0, 1fr); }
+  .shell, .no-tree .shell { grid-template-columns: 68px minmax(0, 1fr); }
   .tree { position: fixed; left: 68px; top: var(--top); bottom: 0; width: 280px; z-index: 35; transform: translateX(-110%);
           transition: transform .18s; box-shadow: var(--shadow); }
   .shell.tree-open .tree { transform: none; }
@@ -652,6 +677,8 @@ input[type=date] { height: 38px; padding: 0 11px; border: 1px solid var(--border
   .main-inner { padding: 20px 16px 110px; }
   .field { padding: 14px; }
   .f-row-inline { flex-direction: column; align-items: flex-start; }
+  .f-head.wrap-narrow { flex-wrap: wrap; row-gap: 2px; }
+  .f-head.wrap-narrow .f-title { flex-basis: 100%; }   /* the setting name and reset button go on the next line */
   .modal .row { grid-template-columns: 1fr; }
   h1 { font-size: 21px; }
   .whoami { display: none; }

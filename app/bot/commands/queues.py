@@ -12,12 +12,7 @@ import bot
 
 async def add(ctx, queues: str = None):
 	""" add author to channel queues """
-	if ctx.qc.paused:
-		raise bot.Exc.PermissionError(ctx.qc.gt("The queue is paused, joining is disabled for now."))
 	phrase = await ctx.qc.check_allowed_to_add(ctx, ctx.author)
-	if bot.steam.required() and not bot.steam.get_link(ctx.author.id):
-		await bot.steam.prompt(ctx, queues)  # joins after linking
-		return
 
 	targets = queues.lower().split(" ") if queues else []
 	# select the only one queue on the channel
@@ -36,12 +31,46 @@ async def add(ctx, queues: str = None):
 		if not len(t_queues):
 			t_queues = [q for q in ctx.qc.queues if q.cfg.is_default]
 
+	# Paused queues (each queue has its own pause) are left out; the player joins the others they asked for.
+	paused = [q for q in t_queues if q.paused]
+	paused_text = None
+	if paused:
+		t_queues = [q for q in t_queues if q not in paused]
+		paused_text = (ctx.qc.gt("{queues} is paused, joining is disabled for now.") if len(paused) == 1
+					   else ctx.qc.gt("{queues} are paused, joining is disabled for now.")).format(
+			queues=join_and([f"**{q.name}**" for q in paused]))
+		if not t_queues:
+			raise bot.Exc.PermissionError(paused_text)
+
+	# Slipgate rating limits (bot.slipgate): queues the player's Slipgate rating keeps them out of are left out, and
+	# named; they join the others they asked for.
+	refused, limit_link = await bot.slipgate.check_limits(ctx.author, t_queues, ctx.qc.gt)
+	if refused:
+		t_queues = [q for q in t_queues if q not in refused]
+		if not t_queues:
+			raise bot.Exc.PermissionError("\n".join(([paused_text] if paused_text else []) + list(refused.values())))
+
+	# Queues that require a linked Steam account: an unlinked player is asked to link one, and joins them once it
+	# is linked; the other queues they asked for they join right away. A queue with a Slipgate rating limit that
+	# doesn't let unrated players in needs a link too.
+	need_link = [q for q in t_queues if q.cfg.require_steam_link or q in limit_link] if not bot.steam.get_link(ctx.author.id) else []
+	if need_link:
+		t_queues = [q for q in t_queues if q not in need_link]
+		if not t_queues:
+			await bot.steam.prompt(ctx, need_link)
+			return
+
 	qr = dict()  # get queue responses
 	for q in t_queues:
 		qr[q] = await q.add_member(ctx, ctx.author)
 		if qr[q] == bot.Qr.QueueStarted:
 			await ctx.notice(ctx.qc.topic)
 			return
+
+	if paused_text:
+		await ctx.error(paused_text)
+	for text in refused.values():
+		await ctx.error(text)
 
 	for q in [q for q in qr.keys() if qr[q] == bot.Qr.Held]:
 		await ctx.error(bot.series.held_message(q))
@@ -56,8 +85,10 @@ async def add(ctx, queues: str = None):
 		if phrase:
 			await ctx.reply(phrase)
 		await ctx.notice(ctx.qc.topic)
-	else:  # have to give some response for slash commands
+	elif not need_link:  # have to give some response for slash commands
 		await ctx.ignore(content=ctx.qc.topic, embed=error_embed(ctx.qc.gt("Action had no effect."), title=None))
+	if need_link:
+		await bot.steam.prompt(ctx, need_link)
 
 
 async def remove(ctx, queues: str = None):
@@ -229,11 +260,11 @@ async def subscribe(ctx, queues: str = None, unsub: bool = False):
 async def server(ctx, queue: str):
 	if (q := find(lambda i: i.name.lower() == queue.lower(), ctx.qc.queues)) is None:
 		raise bot.Exc.SyntaxError(f"Queue '{queue}' not found on the channel.")
-	if not q.cfg.server:
+	if not q.server_text:
 		raise bot.Exc.NotFoundError(ctx.qc.gt("Server for **{queue}** is not set.").format(
 			queue=q.name
 		))
-	await ctx.success(q.cfg.server, title=ctx.qc.gt("Server for **{queue}**").format(
+	await ctx.success(q.server_text, title=ctx.qc.gt("Server for **{queue}**").format(
 		queue=q.name
 	))
 

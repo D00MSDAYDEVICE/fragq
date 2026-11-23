@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.5.0 (2026-11-24)
+
+### New
+
+- **Slipgate integration** (off by default). Add a Slipgate API key in the new **Slipgate** panel on the Settings
+  page (**Save**, **Test**, **Remove**). Each queue gets a **Slipgate** tab (after Voice) with its **game type** and
+  **ladder** (standard, or modified for PQL and instagib). With a tested key:
+  - **Team balancing:** queues with **Pick teams** `matchmaking` and **Balance teams with Slipgate** on get even
+    teams from Slipgate; the match message shows the fairness and each team's chance, or why FragQ balanced
+    instead (unlinked player, Slipgate slow or unavailable).
+  - **Rating limits:** a **minimum** and **maximum** Slipgate display rating per queue. Players outside the range
+    are told why and can't join; unrated and provisional players are let in unless switched off. The panel shows
+    the range (*🎯 1200–1800*).
+  - **Starting ratings** (channel **Rating** tab): new players on ranked queues start from their place on the
+    Slipgate ladder instead of the initial rating.
+  - **`!slipgate`** / `/slipgate` shows a player's Slipgate ratings.
+  - **Results:** Quake Live connectors can **Add Slipgate details to results**: once Slipgate has the match, the
+    posted result gets a link to it, its highlights and its demos. A queue can opt out with **Disable Slipgate
+    Results**.
+
+  A match start never waits more than 2.5 seconds on Slipgate, rate limits are respected, and when Slipgate is
+  unavailable FragQ carries on without it. No game server changes needed.
+- **Pause per queue.** Each queue pauses on its own instead of the whole channel: its Join button greys out, `++`
+  joins the open queues, and the panel turns amber only when every queue is paused. The Discord ⏸ button asks
+  which queue (or all) when a channel has several. **Pause Queue**, **Refresh Panel** (was *Move panel down*) and
+  **Remove panel** moved from the channel page to a row above each queue's settings tabs. Channels paused before
+  the update have each of their queues paused.
+- **Server List.** A new channel tab for the channel's game servers (`IP:port`, with an optional label shown only in
+  the web panel). Each queue can **designate** one of them next to its name; its address then leads the match's
+  server information, above the queue's Server text.
+- **Require linked Steam IDs per queue.** Now a queue setting (General) instead of one switch for the whole bot.
+  Unlinked players adding to several queues join the ones that don't need a link and are asked to link for the rest.
+  If the old switch was on, every queue has it on after the update.
+
+### Improvements
+
+- **Names under panel avatars** (queue Appearance setting): 6 avatars per row with each player's name below.
+- **Series queues** show 🔁 *series of 3 games* on the panel before anyone adds, and moderators get an ⏹️ **End
+  series** button with a private confirmation.
+- **Settings page:** two columns of panels using the full screen width, Linked players across the bottom, and the
+  Steam key badge at the top right.
+- **More room:** pages that aren't about one server (Settings, Bot status, Users, Connectors) no longer show the
+  empty channel column.
+- **Classic match message:** each server line gets its own copyable code box.
+
+### Fixes
+
+- **Config imports** with an empty value for a required setting (such as `"series_length": null`) now use the
+  default instead of refusing the whole import.
+- **Table settings** checked only their first column; every column is checked now.
+
 ## 1.4.0 (2026-11-21)
 
 - **Series.** A new queue setting, **Series length**, lets one pickup play several games on the game server

@@ -34,7 +34,7 @@ os.environ.setdefault("LOG_LEVEL", "INFO")
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-from nextcord import ChannelType, InteractionType, NotFound  # noqa: E402
+from nextcord import ChannelType, Embed, InteractionType, NotFound  # noqa: E402
 from core import config, console, database, locales, cfg_factory  # noqa: E402,F401
 from core.client import dc  # noqa: E402
 
@@ -119,6 +119,10 @@ class Message:
 
 	def __init__(self, channel, data):
 		self.channel, self.id, self.data = channel, next(_msg_ids), data
+
+	@property
+	def embeds(self):
+		return [Embed.from_dict(e) for e in self.data.get("embeds") or []]
 
 	async def edit(self, content=KEEP, embed=None, view=None, file=None, attachments=None, **kwargs):
 		if self not in self.channel.messages:  # like Discord: editing a deleted / unknown message fails

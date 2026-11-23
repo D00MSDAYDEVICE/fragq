@@ -62,7 +62,7 @@ Then open the queue in the tree and adjust it. The most important settings:
 | **Require check-in** (`check_in_timeout`) | How long players have to confirm with `!ready` once the queue is full |
 | **Pick teams** (`pick_teams`) | `draft`, `matchmaking` (balanced by rating), `random teams` or `no teams` |
 | **Maps** (`maps`) and **Map count** | The map pool and how many maps to show |
-| **Server** (`server`) | The address and password printed when the match starts |
+| **Server** (`server`) | The address and password printed when the match starts. A server from the channel's [Server List](../web-panel/overview.md#server-list) can also be designated next to the queue name. |
 
 Every setting is listed in [Queue settings](../reference/queue-settings.md). In chat, the same can be
 done with `/queue create_pickup` and `/queue set`.

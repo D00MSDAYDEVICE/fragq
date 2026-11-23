@@ -28,6 +28,9 @@ AV = 44            # avatar diameter in px
 GAP = 6
 RING = 2
 PER_ROW = 8        # slots per line: queues over 8 get another row of 8
+NAMES_GAP = 14     # with the queue's "Names under panel avatars" on: wider gaps, 6 per row, a name under each
+NAMES_PER_ROW = 6
+NAME_H = 15
 MAX_SLOTS = 24
 MAX_QUEUES = 5
 LABEL_H = 22
@@ -115,37 +118,62 @@ def _paste_circle(canvas, data, x, y, d):
 	canvas.paste(im, (x, y), mask)
 
 
+def _fit(text, font, width):
+	""" text, shortened with … to fit width. """
+	if font.getlength(text) <= width:
+		return text
+	while text and font.getlength(text + "…") > width:
+		text = text[:-1]
+	return text + "…"
+
+
+def _layout(names):
+	""" (slots per row, gap, name line height), in px at SS times the size. """
+	if names:
+		return NAMES_PER_ROW, NAMES_GAP * SS, NAME_H * SS
+	return PER_ROW, GAP * SS, 0
+
+
 def _compose(queues):
 	"""
-	queues: [(label or None, slots, [(initial, image bytes or None), ...])]
+	queues: [(label or None, slots, [(nick, image bytes or None), ...], names)]
+	With names, the queue gets 6 slots per row, wider gaps and each player's name under their picture.
 	Drawn at SS times the size and scaled down, so the circles come out anti-aliased.
 	"""
 	s = SS
-	av, gap, ring = AV * s, GAP * s, RING * s
+	av, ring = AV * s, RING * s
 	font = _font(14 * s)
-	cols = max(min(slots, PER_ROW) for _, slots, _ in queues)
-	width = cols * av + (cols - 1) * gap
-	if font:
-		width = max([width] + [int(font.getlength(label)) + 2 for label, _, _ in queues if label])
+	name_font = _font(11 * s)
+	# room for a name wider than the first or last picture of a row
+	pad = NAMES_GAP * s // 2 if name_font and any(q[3] for q in queues) else 0
+	width = 0
 	height = 0
-	for label, slots, _ in queues:
-		lines = -(-slots // PER_ROW)
-		height += (LABEL_H * s if label and font else 0) + lines * av + (lines - 1) * gap + QUEUE_GAP * s
+	for label, slots, _, names in queues:
+		per_row, gap, name_h = _layout(names and name_font)
+		cols = min(slots, per_row)
+		width = max(width, cols * av + (cols - 1) * gap)
+		if label and font:
+			width = max(width, int(font.getlength(label)) + 2 - pad)
+		lines = -(-slots // per_row)
+		height += (LABEL_H * s if label and font else 0) + lines * (av + name_h) + (lines - 1) * gap + QUEUE_GAP * s
+	width += 2 * pad
 	height -= QUEUE_GAP * s
 
 	canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
 	draw = ImageDraw.Draw(canvas)
 	y = 0
-	for label, slots, players in queues:
+	for label, slots, players, names in queues:
+		per_row, gap, name_h = _layout(names and name_font)
 		if label and font:
-			draw.text((0, y + 2 * s), label, font=font, fill=TEXT)
+			draw.text((pad, y + 2 * s), label, font=font, fill=TEXT)
 			y += LABEL_H * s
 		for i in range(slots):
-			x = (i % PER_ROW) * (av + gap)
-			cy = y + (i // PER_ROW) * (av + gap)
+			x = pad + (i % per_row) * (av + gap)
+			cy = y + (i // per_row) * (av + name_h + gap)
 			box = (x, cy, x + av - 1, cy + av - 1)
 			if i < len(players):
-				initial, data = players[i]
+				nick, data = players[i]
+				initial = (nick[:1] or "?").upper()
 				inner = av - 2 * (ring + s)
 				try:
 					if data is None:
@@ -157,10 +185,13 @@ def _compose(queues):
 					if f:
 						draw.text((x + av / 2, cy + av / 2), initial, font=f, fill=WHITE, anchor="mm")
 				draw.ellipse(box, outline=ACCENT, width=ring)
+				if name_h and nick:
+					draw.text((x + av / 2, cy + av + 2 * s), _fit(nick, name_font, av + gap - 2 * s),
+						font=name_font, fill=TEXT, anchor="mt")
 			else:
 				draw.ellipse(box, fill=EMPTY_FILL, outline=EMPTY_RING, width=ring)
-		lines = -(-slots // PER_ROW)
-		y += lines * av + (lines - 1) * gap + QUEUE_GAP * s
+		lines = -(-slots // per_row)
+		y += lines * (av + name_h) + (lines - 1) * gap + QUEUE_GAP * s
 
 	out = canvas.resize((width // s, height // s), Image.LANCZOS)
 	buf = io.BytesIO()
@@ -170,7 +201,7 @@ def _compose(queues):
 
 def signature(qc):
 	return tuple(
-		(q.name, q.cfg.size, tuple((m.id, avatar_url(m)) for m in q.queue))
+		(q.name, q.cfg.size, bool(q.cfg.panel_names), tuple((m.id, avatar_url(m), get_nick(m)) for m in q.queue))
 		for q in qc.queues[:20] if q.queue
 	)[:MAX_QUEUES]
 
@@ -190,9 +221,9 @@ async def queue_image(qc):
 	rows = []
 	for q in queues:
 		slots = max(len(q.queue), min(q.cfg.size, MAX_SLOTS))
-		players = [((get_nick(m)[:1] or "?").upper(), pictures.get(m.id)) for m in q.queue[:MAX_SLOTS]]
+		players = [(get_nick(m), pictures.get(m.id)) for m in q.queue[:MAX_SLOTS]]
 		label = f"{q.name}  {len(q.queue)}/{q.cfg.size}" if labelled else None
-		rows.append((label, min(slots, MAX_SLOTS), players))
+		rows.append((label, min(slots, MAX_SLOTS), players, bool(q.cfg.panel_names)))
 	png = _compose(rows)
 
 	_rendered[sig] = png

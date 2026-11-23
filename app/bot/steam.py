@@ -30,7 +30,7 @@ from core.client import dc
 from core.config import cfg
 from core.console import log
 from core.database import db
-from core.utils import get_nick, error_embed, ok_embed
+from core.utils import get_nick, error_embed, ok_embed, join_and
 
 import bot
 from bot import settings
@@ -97,8 +97,23 @@ def api_key():
 	return settings.get("steam_api_key") or ""
 
 
-def required():
-	return bool(settings.get("require_steam_link"))
+async def migrate_required():
+	"""
+	Up to FragQ 1.4 "Require Linked Steam IDs" was one bot-wide switch on the Settings page; it is a queue setting
+	now. If the old switch is on (after an update, or restoring an old settings backup), every queue gets the
+	setting turned on and the old switch is cleared. Returns how many queues were changed.
+	"""
+	if not settings.get("require_steam_link") or not bot.bot_ready:
+		return 0
+	changed = 0
+	for qc in list(bot.queue_channels.values()):
+		for q in qc.queues:
+			if not q.cfg.require_steam_link:
+				await q.cfg.update(dict(require_steam_link="1"))
+				changed += 1
+	await settings.put("require_steam_link", False)
+	log.info(f"Require linked Steam IDs is now a queue setting: turned on for {changed} queue(s).")
+	return changed
 
 
 def get_link(user_id):
@@ -520,8 +535,12 @@ def prompt_view(queues=None):
 	return view
 
 
-async def prompt(ctx, queues=None):
-	""" Ask a player who tried to join for their Steam ID. """
+async def prompt(ctx, need):
+	"""
+	Ask a player who tried to join queues that require a linked Steam account (`need`, the queues) for their Steam
+	ID. Once it is linked, they join those queues.
+	"""
+	queues = " ".join(q.name for q in need)
 	inter = getattr(ctx, "interaction", None)
 	if inter is not None and not inter.response.is_done():
 		await inter.response.send_modal(link_modal(queues))
@@ -530,9 +549,9 @@ async def prompt(ctx, queues=None):
 		colour=Colour(0x66c0f4),
 		title="🔗 " + ctx.qc.gt("Link your Steam account"),
 		description=ctx.qc.gt(
-			"You need a linked Steam account to join queues here. Press **Link Steam** and paste your "
+			"You need a linked Steam account to join {queues}. Press **Link Steam** and paste your "
 			"SteamID64 or Steam profile link, or type `{cmd} <id or link>`."
-		).format(cmd=f"{ctx.qc.cfg.prefix}steam"),
+		).format(queues=join_and([f"**{q.name}**" for q in need]), cmd=f"{ctx.qc.cfg.prefix}steam"),
 	)
 	if inter is not None:
 		await inter.followup.send(embed=embed, view=prompt_view(queues), ephemeral=True)
@@ -573,6 +592,8 @@ async def on_init():
 @dc.event
 async def on_think(frame_time):
 	global _next_refresh
+	if settings.get("require_steam_link"):
+		await migrate_required()
 	if frame_time > _next_refresh and not _refreshing and links:
 		_next_refresh = frame_time + REFRESH_EVERY
 		asyncio.create_task(_refresh_stale())

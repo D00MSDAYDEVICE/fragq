@@ -268,6 +268,14 @@ async def _steam(ctx: MessageContext, args: str = None):
 	await bot.commands.steam(ctx, steam=args.strip() if args else None)
 
 
+@message_command('slipgate', 'sg')
+async def _slipgate(ctx: MessageContext, args: str = None):
+	member = await ctx.get_member(args) if args else None
+	if args and member is None:
+		raise bot.Exc.SyntaxError(ctx.qc.gt("Specified user not found."))
+	await bot.commands.slipgate(ctx, player=member)
+
+
 @message_command('panel')
 async def _panel(ctx: MessageContext, args: str = None):
 	await bot.commands.panel(ctx, action=args.strip() if args else None)

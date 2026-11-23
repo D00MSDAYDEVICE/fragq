@@ -13,7 +13,7 @@ class PickupQueue:
 	cfg_factory = CfgFactory(
 		table=FactoryTable(name="pq_configs", p_key="pq_id", f_key="channel_id"),
 		name="pq_config",
-		sections=["General", "Teams", "Appearance", "Maps", "Voice"],
+		sections=["General", "Teams", "Appearance", "Maps", "Voice", "Slipgate"],
 		icon='pq.png',
 		variables=[
 			Variables.StrVar(
@@ -23,6 +23,16 @@ class PickupQueue:
 				notnull=True,
 				verify=lambda name: len(name) and not any((c in name for c in ": \t\n")),
 				verify_message="Invalid queue name. A queue name should be one word without +-: characters."
+			),
+			Variables.ServerVar(
+				"designated_server",
+				display="Designate a server for this queue (optional)",
+				section="General",
+				description="\n".join([
+					"One of the channel's servers (its Server List tab). When a match of this queue starts, its address "
+					"comes first in the match's server information, above the queue's Server text (Appearance).",
+					"A server removed from the Server List is no longer used."
+				])
 			),
 			Variables.TextVar(
 				"description",
@@ -59,6 +69,19 @@ class PickupQueue:
 				section="General",
 				default=1,
 				notnull=True
+			),
+			Variables.BoolVar(
+				"require_steam_link",
+				display="Require linked Steam IDs",
+				section="General",
+				default=0,
+				notnull=True,
+				description="\n".join([
+					"Requires linked Steam key. Players must link a Steam account before they can join this queue: the first "
+					"time they press Join or type !add, FragQ asks for their Steam ID and adds them once it is linked.",
+					"Adding to several queues at once, they join the queues that don't need a link straight away. "
+					"Moderators can still add unlinked players with Add Player."
+				])
 			),
 			Variables.DurationVar(
 				"check_in_timeout",
@@ -124,6 +147,100 @@ class PickupQueue:
 					"  no captains - do not pick captains automatically"
 				]),
 				notnull=True
+			),
+			Variables.OptionVar(
+				"slipgate_game_type",
+				display="Slipgate game type",
+				section="Slipgate",
+				options=["ca", "duel", "ctf", "ft", "tdm", "ffa", "ad", "domination", "harvester", "1flag", "redrover"],
+				description="\n".join([
+					"The Quake Live game type whose Slipgate ratings this queue uses (ca, ctf, tdm, ...). "
+					"Needs a Slipgate API key on the Settings page.",
+					"Not set: the queue doesn't use Slipgate."
+				])
+			),
+			Variables.OptionVar(
+				"slipgate_ladder",
+				display="Slipgate ladder",
+				section="Slipgate",
+				options=["standard", "modified"],
+				default="standard",
+				notnull=True,
+				description="\n".join([
+					"Which of the game type's Slipgate ladders this queue uses for its rating limits, team balancing and "
+					"starting ratings: standard (normal settings) or modified (PQL, instagib and other non-standard settings)."
+				])
+			),
+			Variables.BoolVar(
+				"slipgate_balance",
+				display="Balance teams with Slipgate",
+				section="Slipgate",
+				default=0,
+				notnull=True,
+				description="\n".join([
+					"With Pick teams 'matchmaking' and a Slipgate game type: Slipgate splits the players into even teams "
+					"from their linked Steam accounts, and the match message shows the fairness and each team's chance.",
+					"If a player isn't linked to Steam, or Slipgate is slow or unavailable, FragQ's own matchmaking "
+					"picks the teams, and the match message says why."
+				])
+			),
+			Variables.BoolVar(
+				"slipgate_results_off",
+				display="Disable Slipgate Results",
+				section="Slipgate",
+				default=0,
+				notnull=True,
+				description="\n".join([
+					"On: results a game server posts for this queue never get Slipgate's details (the link to the match, "
+					"its highlights and demos), even when the game server's connector has 'Add Slipgate details to "
+					"results' on and Slipgate is connected on the Settings page.",
+					"The result itself is still posted. Off: the connector decides."
+				])
+			),
+			Variables.IntVar(
+				"slipgate_min_rating",
+				display="Minimum Slipgate rating",
+				section="Slipgate",
+				verify=lambda n: 0 <= n <= 10000,
+				verify_message="A Slipgate rating limit is between 0 and 10000.",
+				description="\n".join([
+					"Players whose Slipgate display rating (in the game type and ladder above) is lower can't join this "
+					"queue. Needs a Slipgate game type and a Slipgate API key.",
+					"Not set: no minimum."
+				])
+			),
+			Variables.IntVar(
+				"slipgate_max_rating",
+				display="Maximum Slipgate rating",
+				section="Slipgate",
+				verify=lambda n: 0 <= n <= 10000,
+				verify_message="A Slipgate rating limit is between 0 and 10000.",
+				description="\n".join([
+					"Players whose Slipgate display rating is higher can't join this queue, such as for a newcomers' queue.",
+					"Not set: no maximum."
+				])
+			),
+			Variables.BoolVar(
+				"slipgate_allow_unrated",
+				display="Let unrated players in",
+				section="Slipgate",
+				default=1,
+				notnull=True,
+				description="\n".join([
+					"With a rating limit set: players Slipgate has no rating for in this game type, or who aren't linked "
+					"to Steam, can still join. Off: they can't (unlinked players are asked to link their Steam account)."
+				])
+			),
+			Variables.BoolVar(
+				"slipgate_allow_provisional",
+				display="Let provisional players in",
+				section="Slipgate",
+				default=1,
+				notnull=True,
+				description="\n".join([
+					"With a rating limit set: players whose Slipgate rating is still provisional (too few games to be sure) "
+					"can join whatever their rating. Off: they can't join until their rating has settled."
+				])
 			),
 			Variables.StrVar(
 				"pick_order",
@@ -250,6 +367,18 @@ class PickupQueue:
 					"While a series is on, nobody can add to the queue. Each result the game server posts for the match "
 					"counts one game; the series ends with the last one, /endseries, the match being canceled, or no "
 					"result for the match lifetime. Unranked matches stay in progress until the series ends."
+				])
+			),
+			Variables.BoolVar(
+				"panel_names",
+				display="Names under panel avatars",
+				section="Appearance",
+				default=0,
+				notnull=True,
+				description="\n".join([
+					"On: the queue panel shows 6 avatars per row with each player's name under their picture "
+					"(long names are shortened).",
+					"Off: 8 avatars per row without names; the names are listed above the pictures either way."
 				])
 			),
 			Variables.IntVar(
@@ -387,6 +516,19 @@ class PickupQueue:
 		return self.cfg.name
 
 	@property
+	def paused(self):
+		""" A paused queue refuses !add / ++ / Join (moderators can still add players). Kept in the queue's cfg_info. """
+		return bool(self.cfg.cfg_info.get('paused'))
+
+	async def set_paused(self, paused: bool):
+		info = dict(self.cfg.cfg_info)
+		if paused:
+			info['paused'] = True
+		else:
+			info.pop('paused', None)
+		await self.cfg.set_info(info)
+
+	@property
 	def status(self):  # (length/max)
 		return f"{len(self.queue)}/{self.cfg.size}"
 
@@ -397,6 +539,19 @@ class PickupQueue:
 	@property
 	def length(self):
 		return len(self.queue)
+
+	@property
+	def server_text(self):
+		"""
+		What a match of this queue shows as its server: the designated server's address (while it is on the channel's
+		Server List) on the first line, then the queue's Server text. None if there is neither.
+		"""
+		designated = self.cfg.designated_server
+		listed = {row["address"] for row in self.qc.cfg.servers or []}
+		lines = [designated] if designated and designated in listed else []
+		if self.cfg.server:
+			lines.append(self.cfg.server)
+		return "\n".join(lines) or None
 
 	def _match_cfg(self):
 		return dict(
@@ -410,7 +565,9 @@ class PickupQueue:
 			check_in_discard=self.cfg.check_in_discard, check_in_discard_immediately=self.cfg.check_in_discard_immediately,
 			match_lifetime=self.cfg.match_lifetime, hold_time=self.cfg.hold_time or 0,
 			series_length=bot.series.length(self),
-			start_msg=self.cfg.start_msg, server=self.cfg.server
+			slipgate_game_type=self.cfg.slipgate_game_type, slipgate_balance=bool(self.cfg.slipgate_balance),
+			slipgate_ladder=self.cfg.slipgate_ladder,
+			start_msg=self.cfg.start_msg, server=self.server_text
 		)
 
 	async def promote(self, ctx):
@@ -496,7 +653,7 @@ class PickupQueue:
 			message=dm_text.format_map(SafeTemplateDict(
 				queue=self.name,
 				channel=ctx.channel.mention,
-				server=self.cfg.server
+				server=self.server_text
 			))
 		)
 		if self.cfg.team_size:
@@ -525,7 +682,7 @@ class PickupQueue:
 				message=dm_text.format_map(SafeTemplateDict(
 					queue=self.name,
 					channel=ctx.channel.mention,
-					server=self.cfg.server
+					server=self.server_text
 				))
 			)
 

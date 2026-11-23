@@ -7,16 +7,20 @@ click instead of typing commands, and the message always shows who is in which q
 
 ## What it shows
 
-- **One field per queue**: the name, how full it is (`5/8`), ⭐ for ranked queues, a progress bar and the
-  players.
+- **One field per queue**: the name, how full it is (`5/8`), ⭐ for ranked queues, 🔁 *series of 3 games*
+  for a queue whose **Series length** is above 1, a progress bar and the players. While a
+  [series](../playing/matches.md#series) is on, the queue shows 🔒 *held* and which game is being played.
 - **Matches in progress** on the channel, with their stage (check-in, draft, in game) and how long
   they've been running.
 - **Player avatars**: a row of profile pictures per queue, with empty rings for the open places. Players
   with a [linked Steam account](../playing/steam.md) show their Steam avatar, others their Discord
-  avatar. Queues over 8 players get another row of 8 (up to 24 places are drawn).
+  avatar. Queues over 8 players get another row of 8 (up to 24 places are drawn). With the queue's
+  **Names under panel avatars** setting (**Settings → Appearance**) on, the queue gets 6 pictures per row
+  instead, a little further apart, with each player's name under their picture; long names are shortened
+  with *…*. Either way, the names are also listed as text above the pictures.
 - **The buttons**: <span class="dbtn green">➕ Join</span> per queue (**Join *name*** when there are
-  several), <span class="dbtn red">✖️ Leave</span>, and the two
-  [moderator buttons](moderators.md) 👤 and ⏸️.
+  several), <span class="dbtn red">✖️ Leave</span>, and the
+  [moderator buttons](moderators.md) 👤 and ⏸️, plus ⏹️ on a channel with a series queue.
 - **The footer** reminds players of `!add` / `!remove` and explains the moderator icons, because
   Discord buttons can't show tooltips.
 
@@ -38,7 +42,7 @@ is deleted and a new one is posted. The panel is remembered across restarts.
 
 ## Keep it visible
 
-FragQ moves the panel back to the bottom of the channel (the same as **Move panel down**):
+FragQ moves the panel back to the bottom of the channel (the same as **Refresh Panel**):
 
 - **When a player joins a queue**, with the Join button, `!add`, `++` or `/add`. FragQ waits a moment
   for its reply, then moves the panel below it. If nothing has been posted since the panel, it stays
@@ -50,7 +54,7 @@ FragQ moves the panel back to the bottom of the channel (the same as **Move pane
   1440) and save. A panel that is still the latest message is left alone, so quiet channels don't get
   reposts. In chat: `/channel set panel_autorefresh 5`, and `none` to turn it off.
 
-You can also move it down at any time with **Move panel down** in the web panel or `!panel` again.
+You can also refresh it and move it down at any time with **Refresh Panel** in the web panel or `!panel` again.
 
 ## Remove it
 

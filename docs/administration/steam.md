@@ -24,13 +24,24 @@ stored in the database.
 
 ## Require Linked Steam IDs
 
-With this switch on, players must link a Steam account before they can join a queue. The first time an
+A queue setting: the queue's **Settings → General → Require linked Steam IDs** (`require_steam_link`), off by
+default. With it on, players must link a Steam account before they can join that queue. The first time an
 unlinked player presses **Join** or uses `/add`, FragQ shows a form asking for their Steam ID or profile
 link; for `!add` and `++` it replies with a **Link Steam** button that opens the form. Once linked, the
 join goes through. See [Linking Steam](../playing/steam.md) for what players see.
 
+- **Adding to several queues at once** (`++`, or `!add` with several names): an unlinked player joins the
+  queues that don't require a link straight away. FragQ asks them to link for the others, naming them
+  (*"You need a linked Steam account to join **CTF**"*), and adds them to those once linked.
 - [Moderators can still add](../queue-panel/moderators.md#add-player) players who haven't linked.
-- With the switch off, linking is voluntary and nobody is asked.
+- With the setting off, linking is voluntary for that queue and nobody is asked.
+- Each queue decides for itself. **Duplicate** copies the setting with the rest of the queue.
+
+!!! note "It used to be one switch for the whole bot"
+    Up to FragQ 1.4 this was a single switch on the Settings page, for every queue on every server. If it
+    was on, updating to 1.5 turned the queue setting on for every queue that existed then; queues made
+    later start with it off. Restoring a settings backup from 1.4 or older that had it on does the same
+    for the restored queues.
 
 ## How a link was made
 
@@ -113,7 +124,8 @@ account can only be linked to one Discord member, so the rightful owner can then
 |---|---|
 | Links: Discord id, SteamID64, Steam name, avatar URL, profile URL, dates | Database table `fragq_steam_links` |
 | Pending changes | Database table `fragq_steam_requests` |
-| The API key and *Require Linked Steam IDs* | Database (bot settings) |
+| The API key | Database (bot settings) |
+| *Require linked Steam IDs* | Database (each queue's settings) |
 | Downloaded avatar pictures | Data volume, `/data/avatars`, deleted after 30 days unused |
 
 Steam names and avatars are refreshed every 3 days, so changes on Steam show up on their own.

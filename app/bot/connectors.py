@@ -53,6 +53,7 @@ db.ensure_table(dict(
 		dict(cname="can_link", ctype=db.types.bool),
 		dict(cname="can_export", ctype=db.types.bool),       # read every linked account of the server (Fragdex)
 		dict(cname="can_voice", ctype=db.types.bool),        # move players between a queue's voice channels
+		dict(cname="slipgate_details", ctype=db.types.bool), # Quake Live: add the Slipgate match to posted results
 		dict(cname="allowed_ips", ctype=db.types.text),      # space separated IPs / CIDR ranges; empty = any
 		dict(cname="rate_limit", ctype=db.types.int),        # requests per minute; 0 = unlimited
 		dict(cname="expires_at", ctype=db.types.str),        # last valid day (UTC, YYYY-MM-DD); empty = never
@@ -84,6 +85,7 @@ db.ensure_table(dict(
 		dict(cname="at", ctype=db.types.int),
 		dict(cname="message_id", ctype=db.types.int),
 		dict(cname="data", ctype=db.types.dict),             # the result as received (normalised)
+		dict(cname="slipgate", ctype=db.types.dict),         # looking it up on Slipgate (bot.slipgate): state, guid, url
 	],
 	primary_keys=["id"]
 ))
@@ -146,7 +148,7 @@ def _decode(row):
 		row["queues"] = [int(x) for x in (queues if isinstance(queues, list) else json.loads(queues))]
 	except (TypeError, ValueError):
 		row["queues"] = []
-	for k in ("can_results", "can_check", "can_link", "can_export", "can_voice", "disabled"):
+	for k in ("can_results", "can_check", "can_link", "can_export", "can_voice", "slipgate_details", "disabled"):
 		row[k] = bool(row.get(k))
 	for k in ("requests", "last_used_at", "last_denied_at", "rate_limit", "unmatched_queue"):
 		row[k] = int(row.get(k) or 0)
@@ -248,6 +250,7 @@ def parse_settings(values, guild_id, current=None):
 	return dict(
 		name=name, game=game, queues=json.dumps([str(q) for q in queues]), unmatched_queue=max(unmatched, 0),
 		allowed_ips=" ".join(allowed), rate_limit=int(rate), expires_at=expires, **perms,
+		slipgate_details=bool(values.get("slipgate_details")) and game == "quakelive",
 	)
 
 
@@ -312,7 +315,8 @@ async def restore(guild_id, x, queues, unmatched, old=None):
 		name=str(x.get("name") or "Connector")[:60], game=game, queues=json.dumps([str(q) for q in queues]),
 		unmatched_queue=unmatched or 0, prefix=str(x.get("prefix") or PREFIX)[:20], key_hash=x["key_hash"],
 		can_results=bool(x.get("can_results")), can_check=bool(x.get("can_check")), can_link=bool(x.get("can_link")),
-		can_export=bool(x.get("can_export")), can_voice=bool(x.get("can_voice")), allowed_ips=allowed, rate_limit=rate, expires_at=expires if DATE_RE.match(expires) else "", disabled=bool(x.get("disabled")),
+		can_export=bool(x.get("can_export")), can_voice=bool(x.get("can_voice")),
+		slipgate_details=bool(x.get("slipgate_details")) and game == "quakelive", allowed_ips=allowed, rate_limit=rate, expires_at=expires if DATE_RE.match(expires) else "", disabled=bool(x.get("disabled")),
 	)
 	if old:
 		return await _save(old, fields)
@@ -785,6 +789,9 @@ async def receive(c, data):
 		message_id=message_id, data=json.dumps(result, ensure_ascii=False),
 	)
 	result_id = await db.insert("fragq_match_results", row)
+	if (message_id and result["match_uid"] and c["slipgate_details"] and c["game"] == "quakelive"
+			and not (queue and queue.cfg.slipgate_results_off)):
+		await bot.slipgate.watch_result(result_id)   # adds the Slipgate match to the message once Slipgate has it
 	where = f"match #{match['match_id']} ({queue.name})" if match else (f"no FragQ match, posted in {queue.name}" if qc else "no FragQ match, stored only")
 	log.info(f"Connector '{c['name']}': result received, {where}" + (", series game {} of {}.".format(*series) if series else "."))
 	if series and bot.series.done(queue):

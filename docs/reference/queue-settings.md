@@ -14,10 +14,12 @@ Durations are written like `1h 30m`, `45m` or `00:15:00`. Roles and channels are
 | Setting | Variable | Type | Default | Description |
 |---|---|---|---|---|
 | Queue name | `name` | text | not set |  |
+| Designate a server for this queue (optional) | `designated_server` | server address (IP:port) | not set | One of the channel's servers (its Server List tab). When a match of this queue starts, its address comes first in the match's server information, above the queue's Server text (Appearance).<br>A server removed from the Server List is no longer used. |
 | Queue size | `size` | number | not set |  |
 | is default | `is_default` | on / off | `on` | Set if users can add to this queue without specifying its name. |
 | is ranked | `ranked` | on / off | `off` | Enable rating features on this queue. |
 | Start when full | `autostart` | on / off | `on` |  |
+| Require linked Steam IDs | `require_steam_link` | on / off | `off` | Requires linked Steam key. Players must link a Steam account before they can join this queue: the first time they press Join or type !add, FragQ asks for their Steam ID and adds them once it is linked.<br>Adding to several queues at once, they join the queues that don't need a link straight away. Moderators can still add unlinked players with Add Player. |
 | Require check-in | `check_in_timeout` | duration | `00:05:00` | Set the check-in stage duration. |
 | Allow discard check-in | `check_in_discard` | on / off | `on` | Allow to discard participation during the check-in stage and abort the match if not everyone is ready in time. |
 | Check-in discard immediately | `check_in_discard_immediately` | on / off | `on` | Revert check-in state immediately when someone discards check-in |
@@ -54,6 +56,7 @@ Other names for this queue, you can also group queues by giving them a same alia
 | Server | `server` | multi-line text | not set | Print this server on a match start. |
 | Promotion message | `promotion_msg` | multi-line text | not set | Replace default promotion message. You can use {name}, {role} and {left} placeholders in the text. |
 | Show streamers | `show_streamers` | on / off | `on` | Show streaming players on a match start. |
+| Names under panel avatars | `panel_names` | on / off | `off` | On: the queue panel shows 6 avatars per row with each player's name under their picture (long names are shortened).<br>Off: 8 avatars per row without names; the names are listed above the pictures either way. |
 
 ## Maps
 
@@ -76,3 +79,16 @@ List of maps to choose from.
 | First team's voice channel | `voice_team1` | voice channel | not set | For the first team in the match message. A game server's teams go to the channel with their name in it (red to a channel named Red...), otherwise to where their players already are. |
 | Second team's voice channel | `voice_team2` | voice channel | not set | For the second team in the match message. |
 | Back to the lobby after the match | `voice_return` | on / off | `on` | When the match is reported or canceled, move its players from the team channels back to the Lobby. |
+
+## Slipgate
+
+| Setting | Variable | Type | Default | Description |
+|---|---|---|---|---|
+| Slipgate game type | `slipgate_game_type` | choice | not set | The Quake Live game type whose Slipgate ratings this queue uses (ca, ctf, tdm, ...). Needs a Slipgate API key on the Settings page.<br>Not set: the queue doesn't use Slipgate. |
+| Slipgate ladder | `slipgate_ladder` | choice | `standard` | Which of the game type's Slipgate ladders this queue uses for its rating limits, team balancing and starting ratings: standard (normal settings) or modified (PQL, instagib and other non-standard settings). Options: `standard`, `modified`. |
+| Balance teams with Slipgate | `slipgate_balance` | on / off | `off` | With Pick teams 'matchmaking' and a Slipgate game type: Slipgate splits the players into even teams from their linked Steam accounts, and the match message shows the fairness and each team's chance.<br>If a player isn't linked to Steam, or Slipgate is slow or unavailable, FragQ's own matchmaking picks the teams, and the match message says why. |
+| Disable Slipgate Results | `slipgate_results_off` | on / off | `off` | On: results a game server posts for this queue never get Slipgate's details (the link to the match, its highlights and demos), even when the game server's connector has 'Add Slipgate details to results' on and Slipgate is connected on the Settings page.<br>The result itself is still posted. Off: the connector decides. |
+| Minimum Slipgate rating | `slipgate_min_rating` | number | not set | Players whose Slipgate display rating (in the game type and ladder above) is lower can't join this queue. Needs a Slipgate game type and a Slipgate API key.<br>Not set: no minimum. |
+| Maximum Slipgate rating | `slipgate_max_rating` | number | not set | Players whose Slipgate display rating is higher can't join this queue, such as for a newcomers' queue.<br>Not set: no maximum. |
+| Let unrated players in | `slipgate_allow_unrated` | on / off | `on` | With a rating limit set: players Slipgate has no rating for in this game type, or who aren't linked to Steam, can still join. Off: they can't (unlinked players are asked to link their Steam account). |
+| Let provisional players in | `slipgate_allow_provisional` | on / off | `on` | With a rating limit set: players whose Slipgate rating is still provisional (too few games to be sure) can join whatever their rating. Off: they can't join until their rating has settled. |

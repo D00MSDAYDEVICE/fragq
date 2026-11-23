@@ -155,6 +155,10 @@ Ties list every player. In duel and free-for-all a **Winner** highlight is added
 Score, K(ills), D(eaths), Dmg and Acc for each player. A player who left and came back has their
 stats added up.
 
+If the server also runs [Slipgate](https://slipgate.gg)'s plugin, turn on **Add Slipgate details to results** on
+its connector: once Slipgate has the match, the posted result gets a link to it, its top highlights and its demos.
+See [Slipgate details on results](../administration/slipgate.md#slipgate-details-on-results).
+
 ## !link
 
 ```text

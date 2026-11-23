@@ -7,7 +7,7 @@ from nextcord import Guild
 
 from core.database import db
 from core.client import dc
-from core.utils import format_emoji, parse_duration, seconds_to_str
+from core.utils import format_emoji, parse_duration, seconds_to_str, valid_server_address
 from core.console import log
 
 FACTORY_VERSION = 1
@@ -557,18 +557,33 @@ class VariableTable(Variable):
 		return {var_name: self.variables[var_name].readable(value) for var_name, value in d.items()}
 
 	def verify(self, l):
-		return(
-			all((
-				all((self.variables[key].verify(value) for key, value in d.items())) for d in l
-			))
-		)
+		# Each column's verify() raises VerifyError and returns None: check every cell (all() stopped at the first).
+		for d in l:
+			for key, value in d.items():
+				self.variables[key].verify(value)
+		return True
 
 	def jsonify(self, l):
 		return [{var_name: self.variables[var_name].jsonify(value) for var_name, value in d.items()} for d in l]
 
 
+class ServerVar(StrVar):
+	""" A game server address, IP or host name and port (131.153.224.87:27970), stored trimmed. """
+
+	async def validate(self, string, guild):
+		if string is None or str(string).strip().lower() in ['', 'none', 'null']:
+			if self.notnull:
+				raise ValueError(f"{self.name} can't be null.")
+			return None
+		string = str(string).strip()
+		if not valid_server_address(string):
+			raise ValueError(f"'{string[:60]}' is not a server address: use IP:port, such as 131.153.224.87:27970.")
+		return string
+
+
 class Variables:
 	StrVar = StrVar
+	ServerVar = ServerVar
 	EmojiVar = EmojiVar
 	TextVar = TextVar
 	OptionVar = OptionVar

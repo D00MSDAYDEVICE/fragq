@@ -40,7 +40,7 @@ def build(include_steam_key=False):
 			channel_name=channel.name if channel else qc.cfg.cfg_info.get("channel_name"),
 			paused=qc.paused,
 			config=schema.ui_values(qc.cfg),
-			queues=[dict(name=q.name, config=schema.ui_values(q.cfg)) for q in qc.queues],
+			queues=[dict(name=q.name, config=schema.ui_values(q.cfg), paused=q.paused) for q in qc.queues],
 		))
 	links = [dict(
 		user_id=str(r["user_id"]), steam_id=r["steam_id"], nick=r.get("nick"), persona=r.get("persona"),
@@ -57,7 +57,7 @@ def build(include_steam_key=False):
 		guild_id=str(c["guild_id"]), name=c["name"], game=c["game"],
 		queues=[queue_ref[q] for q in c["queues"] if q in queue_ref],
 		unmatched_queue=queue_ref.get(c["unmatched_queue"]),
-		**{k: c[k] for k in ("prefix", "key_hash", "can_results", "can_check", "can_link", "can_export", "can_voice", "allowed_ips", "rate_limit",
+		**{k: c[k] for k in ("prefix", "key_hash", "can_results", "can_check", "can_link", "can_export", "can_voice", "slipgate_details", "allowed_ips", "rate_limit",
 							 "expires_at", "disabled", "created_by_name", "created_at")},
 		created_by=str(c.get("created_by") or ""),
 	) for c in bot.connectors.connectors.values()]
@@ -111,6 +111,8 @@ async def restore(data, parts, dry_run=False, who="?"):
 	if "settings" in parts:
 		allowed = bot.settings.BACKUP + bot.settings.LEGACY + ("steam_api_key",)
 		values = {k: v for k, v in (data.get("settings") or {}).items() if k in allowed}
+		# up to FragQ 1.4 a bot-wide switch, now a queue setting: turned on for every queue after the restore
+		old_require = bool(values.pop("require_steam_link", False))
 		if "fragdex_url" in values and not isinstance(values["fragdex_url"], str):
 			del values["fragdex_url"]
 		if not dry_run:
@@ -120,6 +122,9 @@ async def restore(data, parts, dry_run=False, who="?"):
 			for k, v in values.items():
 				await bot.settings.put(k, v)
 		report["settings"] = dict(restored=sorted(values), steam_key="steam_api_key" in values, notes=[])
+		if old_require:
+			report["settings"]["notes"].append(
+				"Require Linked Steam IDs was on in this backup. It is a queue setting now: it is turned on for every queue.")
 
 	if "channels" in parts:
 		r = report["channels"] = dict(created=0, updated=0, missing=0, queues_created=0, queues_updated=0, notes=[])
@@ -147,7 +152,6 @@ async def restore(data, parts, dry_run=False, who="?"):
 			if not dry_run:
 				if inputs:
 					await qc.cfg.update(inputs)
-				await qc.set_paused(bool(c.get("paused")))
 			existing = {q.name.lower(): q for q in qc.queues} if qc else {}
 			for qd in c.get("queues") or []:
 				qname = str(qd.get("name") or (qd.get("config") or {}).get("name") or "").strip()
@@ -169,11 +173,15 @@ async def restore(data, parts, dry_run=False, who="?"):
 					if not dry_run:
 						cfg_obj = await bot.PickupQueue.cfg_factory.spawn(guild, f_key=qc.id)
 						await cfg_obj.update(qinputs)
-						qc.queues.append(bot.PickupQueue(qc, cfg_obj))
+						q = bot.PickupQueue(qc, cfg_obj)
+						qc.queues.append(q)
 				else:
 					r["queues_updated"] += 1
 					if not dry_run and qinputs:
 						await q.cfg.update(qinputs)
+				if not dry_run and q is not None:
+					# each queue's pause; a backup from FragQ 1.4 or older paused the whole channel instead
+					await q.set_paused(bool(qd.get("paused", c.get("paused"))))
 			if not dry_run:
 				await bot.panel.refresh(qc, force=True)
 
@@ -247,6 +255,9 @@ async def restore(data, parts, dry_run=False, who="?"):
 				unmatched = queue_id(x.get("unmatched_queue")) if x.get("unmatched_queue") else 0
 				await bot.connectors.restore(gid, x, queues, unmatched if unmatched in queues else 0, old)
 
+	if "settings" in parts and old_require and not dry_run:
+		await bot.settings.put("require_steam_link", True)
+		await bot.steam.migrate_required()   # after the channels, so restored queues get it too
 	if not dry_run:
 		log.info(f"WEBUI| {who} restored a backup ({', '.join(parts)}) made {time.strftime('%Y-%m-%d', time.gmtime(data.get('created_at') or 0))}.")
 	return report

@@ -107,8 +107,8 @@ The game server doesn't know FragQ's match number, so FragQ works it out:
 If no match qualifies, the result goes where **Results without a FragQ match** says. It is still stored.
 
 !!! tip "Link everyone's Steam account"
-    Matching works best when every player is linked. Turn on **Require Linked Steam IDs** on the
-    [Settings page](../administration/settings-page.md), or let players link from the game with
+    Matching works best when every player is linked. Turn on the queue setting
+    [Require linked Steam IDs](../administration/steam.md#require-linked-steam-ids), or let players link from the game with
     [`!link`](quake-live.md#link).
 
 A tool that knows the FragQ match number can send it as `fragq_match_id`, and FragQ uses that match

@@ -509,11 +509,10 @@
   function renderTree() {
     var tree = clear(dom.tree);
     var g = S.guild;
-    if (!g) {
-      append(tree, h("div", { class: "tree-body" }, h("div", { class: "empty-state" }, icon("users"),
-        h("p", { text: S.guilds.length ? "Pick a server on the left." : "No servers yet." }))));
-      return;
-    }
+    // Pages without a server (Settings, Bot status, Users, Connectors, the welcome page) have no channels to
+    // list: the column is hidden and the page gets its width.
+    document.body.classList.toggle("no-tree", !g);
+    if (!g) return;
     tree.appendChild(h("div", { class: "tree-head", role: "button", tabindex: "0", onclick: function () { go({ gid: g.id }); } },
       h("h3", { text: g.name }),
       h("small", { text: g.channels.length + " queue channel" + (g.channels.length === 1 ? "" : "s") + " · " + (g.members || 0) + " members" })));
@@ -530,7 +529,7 @@
         onclick: function () { go({ gid: g.id, cid: c.id }); },
         onkeydown: function (e) { if (e.key === "Enter") go({ gid: g.id, cid: c.id }); } },
         icon("hash"), h("span", { class: "t-name", text: c.name }),
-        c.paused ? h("span", { class: "t-paused", title: "Queue paused: joining is disabled" }, icon("pause")) : null, more));
+        c.paused ? h("span", { class: "t-paused", title: "Every queue is paused: joining is disabled" }, icon("pause")) : null, more));
       c.queues.forEach(function (q) {
         var qa = S.route.qid === q.id;
         var qmore = h("button", { class: "icon-btn t-menu", type: "button", "aria-label": "Queue options", "aria-haspopup": "menu",
@@ -539,6 +538,7 @@
           onclick: function () { go({ gid: g.id, cid: c.id, qid: q.id }); },
           onkeydown: function (e) { if (e.key === "Enter") go({ gid: g.id, cid: c.id, qid: q.id }); } },
           h("span", { class: "pq", text: "PQ" }), h("span", { class: "t-name", text: q.name }),
+          q.paused ? h("span", { class: "t-paused", title: "Paused: joining is disabled" }, icon("pause")) : null,
           h("span", { class: "t-count" + (q.players ? " hot" : ""), text: q.players + "/" + q.size }), qmore));
       });
       if (can("manage_queues", c)) {
@@ -563,9 +563,8 @@
   function channelMenu(anchor, c) {
     var items = [
       can("manage_channels") ? { icon: "copy", label: "Duplicate", action: function () { addChannelModal(c); } } : null,
-      can("panel", c) ? { icon: "panel", label: c.panel ? "Move queue panel down" : "Post queue panel", action: function () { panelAction(c, true); } } : null,
+      can("panel", c) ? { icon: c.panel ? "refresh" : "panel", label: c.panel ? "Refresh queue panel" : "Post queue panel", action: function () { panelAction(c, true); } } : null,
       can("panel", c) && c.panel ? { icon: "x", label: "Remove queue panel", action: function () { panelAction(c, false); } } : null,
-      can("pause", c) ? { icon: c.paused ? "play" : "pause", label: c.paused ? "Resume queue" : "Pause queue", action: function () { pauseAction(c, !c.paused); } } : null,
       { icon: "swap", label: can("edit_channel", c) ? "Import / export config" : "Export config", action: function () { cfgModal("channel", c); } },
       can("stats", c) ? { icon: "download", label: "Export players (CSV)", action: function () { location.href = "/api/channels/" + c.id + "/stats/players.csv"; } } : null,
       can("stats", c) ? { icon: "download", label: "Export matches (CSV)", action: function () { location.href = "/api/channels/" + c.id + "/stats/matches.csv"; } } : null,
@@ -580,6 +579,7 @@
     var danger = can("manage_queues", c);
     menu(anchor, [
       danger ? { icon: "copy", label: "Duplicate", action: function () { duplicateQueue(c, q); } } : null,
+      can("pause", c) ? { icon: q.paused ? "play" : "pause", label: q.paused ? "Resume queue" : "Pause Queue", action: function () { pauseAction(c, q, !q.paused); } } : null,
       { icon: "swap", label: can("edit_queue", c) ? "Import / export config" : "Export config", action: function () { cfgModal("queue", c, q); } },
       can("clear_queues", c) ? { icon: "eraser", label: "Remove all players", action: function () { clearQueue(c, q); } } : null,
       can("clear_queues", c) && q.series ? { icon: "play", label: "End series", action: function () { endSeries(c, q); } } : null,
@@ -588,17 +588,20 @@
     ]);
   }
 
+  // The channel's queue panel: one Discord message for all of its queues, so these act on the whole channel.
   function panelAction(c, post) {
+    var had = !!c.panel;
     api(post ? "POST" : "DELETE", "/api/channels/" + c.id + "/panel").then(function () {
-      toast(post ? "Queue panel posted in #" + c.name + "." : "Queue panel removed.");
-      return reloadGuild().then(function () { if (S.route.cid === c.id && !S.route.qid) route(); });
+      toast(!post ? "Queue panel removed from #" + c.name + "." : had ? "Queue panel refreshed and moved down in #" + c.name + "." : "Queue panel posted in #" + c.name + ".");
+      return reloadGuild().then(function () { if (S.route.cid === c.id) route(); });
     }).catch(function (e) { toast(e.message, "error"); });
   }
 
-  function pauseAction(c, paused) {
-    api("POST", "/api/channels/" + c.id + "/pause", { paused: paused }).then(function () {
-      toast(paused ? "Queue paused in #" + c.name + ". Players can't join until it's resumed." : "Queue resumed in #" + c.name + ".");
-      return reloadGuild().then(function () { if (S.route.cid === c.id && !S.route.qid) route(); });
+  // Each queue has its own pause.
+  function pauseAction(c, q, paused) {
+    api("POST", "/api/channels/" + c.id + "/queues/" + q.id + "/pause", { paused: paused }).then(function () {
+      toast(paused ? q.name + " is paused. Players can't join it until it's resumed." : q.name + " is open again.");
+      return reloadGuild().then(function () { if (S.route.cid === c.id) route(); });
     }).catch(function (e) { toast(e.message, "error"); });
   }
 
@@ -853,6 +856,7 @@
     return h("div", { class: "qcard" },
       h("div", { class: "qcard-head" }, h("span", { class: "pq", text: "PQ" }), h("strong", { text: q.name }), extra || null,
         q.series ? h("span", { class: "badge blue", title: "Nobody can add until the series ends", text: "Held" }) : null,
+        q.paused ? h("span", { class: "badge warn", title: "Joining is disabled until it's resumed", text: "Paused" }) : null,
         h("span", { class: "t-count" + (q.players ? " hot" : ""), text: q.players + "/" + q.size }),
         h("span", { class: "meter" }, h("span", { style: "width:" + pct + "%" }))),
       q.series ? h("div", { class: "muted", style: "margin-top:6px;font-size:13px", text: seriesText(q.series) }) : null,
@@ -948,6 +952,7 @@
   function renderSettings() {
     S.editor = null;
     var root = main();
+    root.classList.add("wide");
     var owner = S.me.user.owner;
     append(root, h("div", { class: "page-head" }, h("div", {}, h("h1", { text: "Settings" }),
       h("p", { text: owner ? "Bot-wide settings for every server FragQ is on. Only the bot owner can change these."
@@ -958,10 +963,10 @@
     api("GET", "/api/settings").then(function (s) {
       if (S.route.page !== "settings") return;
       clear(body);
-      append(body, botSettingsPanel(s));
-      append(body, fragdexPanel(s.fragdex));
+      // Two columns of two, then Linked players across the full width (one column on narrow screens).
+      append(body, h("div", { class: "grid-2 settings-grid" },
+        botSettingsPanel(s), fragdexPanel(s.fragdex), slipgatePanel(s.slipgate), backupPanel()));
       append(body, steamLinksPanel());
-      append(body, backupPanel());
     }).catch(function (e) { clear(body); append(body, h("div", { class: "flash flash-error", text: e.message })); });
   }
 
@@ -985,15 +990,6 @@
         .catch(function (e) { errEl.show(e.fields && e.fields.api_key || e.message); return false; })
         .then(function (ok) { busy.disabled = false; testBtn.disabled = removeBtn.disabled = !st.api_key_set; return ok; });
     }
-
-    // Require Linked Steam IDs
-    var requireErr = fieldErr(), requireNote = h("div", { class: "f-null" });
-    var require = switchEl("Require Linked Steam IDs", function (on) {
-      save({ steam: { require_link: on } }, require.cb, requireErr).then(function (ok) {
-        if (ok) toast(on ? "Players must now link a Steam account before joining a queue." : "Steam accounts are no longer required to join queues.");
-        else require.cb.checked = !on;
-      });
-    });
 
     // Steam Web API key
     var badge = h("span");
@@ -1019,35 +1015,29 @@
     keyInput.addEventListener("keydown", function (e) { if (e.key === "Enter") saveKey(); });
 
     function draw() {
-      require.cb.checked = !!st.require_link;
-      requireNote.textContent = st.linked + " player" + (st.linked === 1 ? "" : "s") + " linked so far.";
       badge.className = "badge " + (st.api_key_set ? "ok" : "warn");
-      badge.textContent = st.api_key_set ? "Key saved" : "No key";
+      badge.textContent = st.api_key_set ? "Steam key saved" : "No Steam key";
       keyInput.value = "";
       keyInput.placeholder = st.api_key_set ? "Saved key ends in …" + st.api_key_hint + ". Paste a new key to replace it." : "32-character Steam Web API key";
       testBtn.disabled = removeBtn.disabled = !st.api_key_set;
     }
     draw();
 
-    function toggleField(title, desc, sw, extra) {
-      return h("div", { class: "field" },
-        h("div", { class: "f-row-inline" },
-          h("div", {}, h("div", { class: "f-head" }, h("span", { class: "f-title", text: title })), h("p", { class: "f-desc", text: desc })),
-          h("div", { class: "f-body" }, sw.el)),
-        extra);
-    }
+    // The Steam key's state sits at the top right, like the other panels' connection badges.
     return h("section", { class: "panel" },
-      h("div", { class: "panel-head" }, h("h2", { text: "Bot settings" })),
-      toggleField("Require Linked Steam IDs",
-        "Players must link a Steam account before they can join a queue. The first time they press Join or type !add, FragQ asks for their Steam ID. Changing it later with !steam or /steam needs a moderator's approval below. Moderators can still add unlinked players with Add Player.",
-        require, [requireNote, requireErr]),
+      h("div", { class: "panel-head" }, h("h2", { text: "Bot settings" }), badge),
       h("div", { class: "field" },
-        h("div", { class: "f-head" }, h("span", { class: "f-title", text: "Steam Web API key" }), badge),
+        h("div", { class: "f-head" }, h("span", { class: "f-title", text: "Steam Web API key" })),
         h("p", { class: "f-desc" }, "Optional. Steam names, avatars and custom profile names (steamcommunity.com/id/…) work without a key by reading public Steam profiles, " +
           "but that is slower and rate limited. With a key FragQ uses the Steam Web API instead. Get one at ",
           h("a", { href: "https://steamcommunity.com/dev/apikey", target: "_blank", rel: "noopener noreferrer", text: "steamcommunity.com/dev/apikey" }),
           ". It is checked with Steam when you save, and never shown again in full."),
-        h("div", { class: "f-body" }, keyInput, h("div", { class: "key-actions" }, saveBtn, testBtn, removeBtn), keyErr)));
+        h("div", { class: "f-body" }, keyInput, h("div", { class: "key-actions" }, saveBtn, testBtn, removeBtn), keyErr)),
+      h("div", { class: "field" },
+        h("div", { class: "f-head" }, h("span", { class: "f-title", text: "Require Linked Steam IDs moved" })),
+        h("p", { class: "f-desc", text: "It is a queue setting now, so each queue can decide: queue Settings › General › Require linked Steam IDs. " +
+          "If it was on here, it was turned on for every queue when FragQ was updated." }),
+        h("div", { class: "f-null", text: st.linked + " player" + (st.linked === 1 ? "" : "s") + " linked so far." })));
   }
 
   // Fragdex lookups: the address and key of a Fragdex API, a Test and a Save button, and the switch, which can
@@ -1148,6 +1138,81 @@
               "It only counts for members of the server the game server's connector belongs to." })),
           h("div", { class: "f-body" }, toggle)),
         info, lookupErr));
+  }
+
+  // Slipgate: the bot owner's Slipgate API key, with Save, Test and Remove. What uses it is set per queue
+  // (Teams: Slipgate game type, Balance teams with Slipgate) and per channel (Rating: starting ratings).
+  function slipgatePanel(sg) {
+    var badge = h("span"), info = h("div", { class: "f-null" }), err = fieldErr();
+    var keyInput = h("input", { type: "password", autocomplete: "off", spellcheck: "false", class: "mono", style: "max-width:420px",
+      "aria-label": "Slipgate API key" });
+    var saveBtn = h("button", { class: "btn btn-primary", type: "button", onclick: save }, icon("check"), "Save");
+    var testBtn = h("button", { class: "btn", type: "button", onclick: test }, icon("pulse"), "Test");
+    var removeBtn = h("button", { class: "btn btn-ghost", type: "button", onclick: remove }, icon("trash"), "Remove");
+
+    function busy(on) { saveBtn.disabled = testBtn.disabled = on; removeBtn.disabled = on || !sg.key_set; }
+    function save() {
+      var k = keyInput.value.trim();
+      if (!k) return err.show("Paste the API key first.");
+      busy(true);
+      api("PUT", "/api/settings", { slipgate: { api_key: k } }).then(function (r) {
+        sg = r.slipgate; draw();
+        if (sg.test_error) err.show("Saved, but the test failed: " + sg.test_error);
+        else { err.show(null); toast("Slipgate API key saved and tested."); }
+      }).catch(function (e) { err.show(e.fields && e.fields.api_key || e.message); }).then(function () { busy(false); });
+    }
+    function test() {
+      var k = keyInput.value.trim();
+      if (!k && !sg.key_set) return err.show("Paste the API key first.");
+      busy(true);
+      api("POST", "/api/settings/slipgate/test", { api_key: k }).then(function (r) {
+        sg = r.settings.slipgate; draw(); err.show(null);
+        if (!r.saved) keyInput.value = k;   // keep what was typed for Save
+        toast("Slipgate accepted the key." + (r.saved ? "" : " Press Save to keep it."));
+      }).catch(function (e) { err.show(e.message); }).then(function () { busy(false); });
+    }
+    function remove() {
+      confirmModal({ title: "Remove Slipgate API key", text: "FragQ forgets the key. Queues that balance with Slipgate go back to FragQ's own matchmaking, and new players start at the channel's initial rating.", ok: "Remove", danger: true })
+        .then(function (ok) {
+          if (!ok) return;
+          busy(true);
+          api("PUT", "/api/settings", { slipgate: { remove: true } }).then(function (r) { sg = r.slipgate; draw(); err.show(null); toast("Slipgate API key removed."); })
+            .catch(function (e) { err.show(e.message); }).then(function () { busy(false); });
+        });
+    }
+    function draw() {
+      badge.className = "badge " + (sg.connected ? "ok" : sg.key_set ? "warn" : "");
+      badge.textContent = sg.connected ? "Connected" : sg.key_set ? "Not tested" : "Not set up";
+      keyInput.value = "";
+      keyInput.placeholder = sg.key_set ? "Saved key ends in …" + sg.key_hint + ". Paste a new key to replace it." : "sg_…";
+      removeBtn.disabled = !sg.key_set;
+      var lines = [];
+      if (!sg.connected) lines.push("Save and test a key to use Slipgate.");
+      else {
+        lines.push("Tested " + fmtDate(sg.tested_at) + ".");
+        var used = [];
+        if (sg.balanced) used.push(sg.balanced + " match" + (sg.balanced === 1 ? "" : "es") + " balanced by Slipgate");
+        if (sg.fallback) used.push(sg.fallback + " by FragQ ratings instead");
+        if (sg.seeded) used.push(sg.seeded + " starting rating" + (sg.seeded === 1 ? "" : "s"));
+        if (sg.results) used.push(sg.results + " result" + (sg.results === 1 ? "" : "s") + " with Slipgate details");
+        if (used.length) lines.push("Since FragQ started: " + used.join(", ") + ".");
+      }
+      if (sg.paused_until) lines.push("Rate limited by Slipgate until " + fmtDate(sg.paused_until) + "; FragQ uses its own ratings until then.");
+      if (sg.last_error) lines.push("Last error: " + sg.last_error.message);
+      info.textContent = lines.join(" ");
+    }
+    keyInput.addEventListener("keydown", function (e) { if (e.key === "Enter") save(); });
+    draw();
+
+    return h("section", { class: "panel" },
+      h("div", { class: "panel-head" }, h("h2", { text: "Slipgate" }), badge),
+      h("div", { class: "field" },
+        h("div", { class: "f-head" }, h("span", { class: "f-title", text: "Slipgate API key" })),
+        h("p", { class: "f-desc" }, "Optional. Slipgate rates Quake Live players from their public games. With a key, queues can have Slipgate split players into even teams " +
+          "(queue Settings › Slipgate), and new players can start at their Slipgate rating (channel Settings › Rating). Everything goes by the players' linked Steam accounts; " +
+          "when Slipgate is slow or unavailable FragQ uses its own ratings. Create a read-only key at ",
+          h("a", { href: (sg.site || "https://slipgate.gg") + "/me/settings", target: "_blank", rel: "noopener noreferrer", text: "slipgate.gg/me/settings" }), "."),
+        h("div", { class: "f-body" }, keyInput, h("div", { class: "key-actions" }, saveBtn, testBtn, removeBtn), err, info)));
   }
 
   function proofBadge(r) {
@@ -1265,7 +1330,8 @@
     var PARTS = [
       { id: "settings", label: "Bot settings", desc: function (d) {
         var s = d.settings || {};
-        return "Auto-repost, Require Linked Steam IDs" + ("steam_api_key" in s ? " and the Steam Web API key" : " (the backup has no Steam API key)") + ".";
+        return "The Fragdex address" + ("steam_api_key" in s ? " and the Steam Web API key" : " (the backup has no Steam API key)") +
+          (s.require_steam_link ? ". Require Linked Steam IDs was on: it is turned on for every queue." : ".");
       } },
       { id: "channels", label: "Channels and queues", desc: function (d) {
         var c = d.channels || [], q = c.reduce(function (n, x) { return n + (x.queues || []).length; }, 0);
@@ -1745,7 +1811,8 @@
           c.can_check ? h("span", { class: "pchip", text: "Check linked players" }) : null,
           c.can_link ? h("span", { class: "pchip", text: "Link Steam from game" }) : null,
           c.can_export ? h("span", { class: "pchip", text: "Read linked accounts" }) : null,
-          c.can_voice ? h("span", { class: "pchip", text: "Move players in voice" }) : null)),
+          c.can_voice ? h("span", { class: "pchip", text: "Move players in voice" }) : null,
+          c.slipgate_details ? h("span", { class: "pchip", text: "Slipgate details" }) : null)),
       h("dl", { class: "conn-meta" }, meta.map(function (m) { return h("div", { class: m[2] || "" }, h("dt", { text: m[0] }), h("dd", { text: m[1] })); })),
       h("div", { class: "key-actions" },
         h("button", { class: "btn btn-sm", type: "button", onclick: function () { connectorModal(d, base, c, reload); } }, icon("edit"), "Edit"),
@@ -1775,7 +1842,7 @@
     fragdex = fragdex || (editing && exportOnly(c));
     var m = modal({ title: (editing ? "Edit " : "Create ") + (fragdex ? "Fragdex connector" : "connector"), wide: true });
     var st = editing ? clone(c) : { name: "", game: "generic", queues: d.queues.length === 1 ? [d.queues[0].id] : [], unmatched_queue: "",
-      can_results: true, can_check: true, can_link: true, can_export: false, can_voice: false, allowed_ips: [], rate_limit: d.default_rate, expires_at: "" };
+      can_results: true, can_check: true, can_link: true, can_export: false, can_voice: false, slipgate_details: false, allowed_ips: [], rate_limit: d.default_rate, expires_at: "" };
     if (fragdex && !editing) {
       st.name = "Fragdex";
       st.queues = [];
@@ -1816,6 +1883,13 @@
           : "There is no ready-made plugin for this game yet: it needs a tool that sends results in FragQ's result format (beta).";
     }
     game.addEventListener("change", drawGame);
+    var sgCb = h("input", { type: "checkbox", checked: !!st.slipgate_details, onchange: function () { st.slipgate_details = sgCb.checked; } });
+    var sgRow = h("div", { class: "form-row" }, h("label", { class: "lbl", text: "Slipgate" }),
+      h("label", { class: "perm-item" }, sgCb, h("span", {}, h("b", { text: "Add Slipgate details to results" }),
+        h("small", { text: "For game servers that also run Slipgate's plugin: once Slipgate has the match (FragQ asks a few times in the first 15 minutes), " +
+          "the posted result gets a link to it on slipgate.gg, the top highlights and whether demos exist. Uses the Quake Live match ID the FragQ plugin already sends." }))));
+    function drawSlipgate() { sgRow.hidden = game.value !== "quakelive"; }
+    game.addEventListener("change", drawSlipgate);
 
     var perms = [
       ["can_results", "Send match results", "Post end-of-match results and stats in the queue's channel."],
@@ -1837,7 +1911,7 @@
       row("Queues", d.queues.length ? qbox : h("span", { class: "muted", text: "No queues on this server yet." }),
         "Results are matched to a FragQ match of these queues by the players' linked Steam accounts. A key that only reads linked accounts needs none."),
       row("Results without a FragQ match", unmatched, "When no recent match of these queues has most of the game's players, for example when players aren't linked."),
-      row("What the key can do", h("div", { class: "perm-grid one" }, perms))],
+      row("What the key can do", h("div", { class: "perm-grid one" }, perms)), sgRow],
       h("div", { class: "conn-form-grid" },
         row("Rate limit (requests / minute)", rate, "0 = unlimited"),
         row("Expires", expires, "Works through this day (UTC). Empty = never.")),
@@ -1846,13 +1920,14 @@
     append(m.foot, [h("button", { class: "btn btn-ghost", type: "button", onclick: m.close }, "Cancel"), save]);
     drawUnmatched();
     drawGame();
+    drawSlipgate();
     name.focus();
 
     function submit() {
       save.disabled = true;
       var payload = { name: name.value, game: game.value, queues: st.queues, unmatched_queue: st.unmatched_queue,
         can_results: st.can_results, can_check: st.can_check, can_link: st.can_link, can_export: st.can_export, can_voice: st.can_voice,
-        rate_limit: rate.value, expires_at: expires.value, allowed_ips: ips.value };
+        slipgate_details: game.value === "quakelive" && st.slipgate_details, rate_limit: rate.value, expires_at: expires.value, allowed_ips: ips.value };
       (editing ? api("PUT", base + "/" + c.id, payload) : api("POST", base, payload)).then(function (r) {
         m.close();
         toast(editing ? "Connector saved." : "Connector created.");
@@ -1864,10 +1939,13 @@
   // ------------------------------------------------------------------ channel page
   var CHANNEL_VIEWS = [
     { id: "settings", label: "Settings", icon: "gear" },
+    { id: "servers", label: "Server List", icon: "server" },
     { id: "live", label: "Live", icon: "pulse" },
     { id: "leaderboard", label: "Leaderboard", icon: "trophy", perm: "stats" },
     { id: "matches", label: "Matches", icon: "history", perm: "stats" },
   ];
+  // Channel settings shown on their own tab instead of among the settings sections.
+  var HIDDEN_SECTIONS = { channel: ["Servers"] };
 
   function findChannel(cid) { return S.guild.channels.find(function (c) { return c.id === cid; }); }
 
@@ -1887,15 +1965,9 @@
     var head = h("div", { class: "page-head" },
       h("div", {}, crumbs([{ label: S.guild.name, route: { gid: r.gid } }, { label: "Queue channel" }]),
         h("div", { class: "title" }, icon("hash"), h("h1", { text: c.name }),
-          c.paused ? h("span", { class: "badge warn", text: "Paused" }) : null)),
+          c.paused ? h("span", { class: "badge warn", text: "Paused" })
+            : c.paused_queues ? h("span", { class: "badge warn", text: c.paused_queues + " of " + c.queues.length + " paused" }) : null)),
       h("div", { class: "head-actions" },
-        can("pause", c) ? h("button", { class: "btn" + (c.paused ? " btn-warn" : ""), type: "button",
-          title: c.paused ? "Let players join again" : "Stop players joining. Moderators can still add players from the queue panel.",
-          onclick: function () { pauseAction(c, !c.paused); } }, icon(c.paused ? "play" : "pause"), c.paused ? "Queue paused" : "Pause queue") : null,
-        can("panel", c) ? h("button", { class: "btn", type: "button", title: "Discord message with Join/Leave buttons that updates live",
-          onclick: function () { panelAction(c, true); } }, icon("panel"), c.panel ? "Move panel down" : "Post queue panel") : null,
-        can("panel", c) && c.panel ? h("button", { class: "btn btn-ghost", type: "button", title: "Delete the queue panel message",
-          onclick: function () { panelAction(c, false); } }, icon("x"), "Remove panel") : null,
         h("button", { class: "btn", type: "button", onclick: function () { cfgModal("channel", c); } }, icon("swap"), can("edit_channel", c) ? "Import / export" : "Export"),
         can("manage_queues", c) ? h("button", { class: "btn btn-primary", type: "button", onclick: function () { createQueueModal(c); } }, icon("plus"), "Create queue") : null));
     var views = h("div", { class: "views", role: "tablist" });
@@ -1910,6 +1982,7 @@
     if (r.view === "live") return renderLive(body, c);
     if (r.view === "leaderboard") return renderLeaderboard(body, c);
     if (r.view === "matches") return renderMatches(body, c);
+    if (r.view === "servers") return renderServers(body, c);
     if (S.editor && S.editor.cid === c.id && !S.editor.qid) { S.editor.mount(body); return; }
     body.appendChild(h("div", { class: "empty-state" }, h("span", { class: "spinner" })));
     api("GET", "/api/channels/" + c.id).then(function (d) {
@@ -1929,15 +2002,27 @@
     var root = main();
     var head = h("div", { class: "page-head" },
       h("div", {}, crumbs([{ label: S.guild.name, route: { gid: r.gid } }, { label: "#" + c.name, route: { gid: r.gid, cid: c.id } }, { label: "Pickup queue" }]),
-        h("div", { class: "title" }, icon("queue"), h("h1", { text: q.name }), h("span", { class: "t-count" + (q.players ? " hot" : ""), text: q.players + "/" + q.size }))),
+        h("div", { class: "title" }, icon("queue"), h("h1", { text: q.name }), h("span", { class: "t-count" + (q.players ? " hot" : ""), text: q.players + "/" + q.size }),
+          q.paused ? h("span", { class: "badge warn", text: "Paused" }) : null)),
       h("div", { class: "head-actions" },
         can("clear_queues", c) && q.players ? h("button", { class: "btn", type: "button", onclick: function () { clearQueue(c, q); } }, icon("eraser"), "Remove all players") : null,
         can("clear_queues", c) && q.series ? h("button", { class: "btn btn-warn", type: "button", title: seriesText(q.series),
           onclick: function () { endSeries(c, q); } }, icon("play"), "End series") : null,
         h("button", { class: "btn", type: "button", onclick: function () { cfgModal("queue", c, q); } }, icon("swap"), can("edit_queue", c) ? "Import / export" : "Export"),
         can("manage_queues", c) ? h("button", { class: "btn btn-danger", type: "button", onclick: function () { deleteQueue(c, q); } }, icon("trash"), "Delete") : null));
+    // Above the section tabs: this queue's pause, and the channel's queue panel (one Discord message for all its queues).
+    var actions = h("div", { class: "q-actions" },
+      can("pause", c) ? h("button", { class: "btn" + (q.paused ? " btn-warn" : " btn-outline-ok"), type: "button",
+        title: q.paused ? "Let players join " + q.name + " again" : "Stop players joining " + q.name + ". Moderators can still add players from the queue panel.",
+        onclick: function () { pauseAction(c, q, !q.paused); } }, icon(q.paused ? "play" : "pause"), q.paused ? "Queue paused" : "Pause Queue") : null,
+      can("panel", c) ? h("button", { class: "btn btn-outline-ok", type: "button",
+        title: c.panel ? "Refreshes and moves the queue panel down in the discord channel (#" + c.name + ", all its queues)"
+          : "Post the queue panel in #" + c.name + ": a Discord message with Join/Leave buttons for all its queues that updates live",
+        onclick: function () { panelAction(c, true); } }, icon(c.panel ? "refresh" : "panel"), c.panel ? "Refresh Panel" : "Post queue panel") : null,
+      can("panel", c) && c.panel ? h("button", { class: "btn btn-ghost", type: "button", title: "Delete the queue panel message in #" + c.name + " (all its queues)",
+        onclick: function () { panelAction(c, false); } }, icon("x"), "Remove panel") : null);
     var body = h("div");
-    append(root, [head, body]);
+    append(root, [head, actions.children.length ? actions : null, body]);
     if (S.editor && S.editor.qid === q.id) { S.editor.mount(body); return; }
     body.appendChild(h("div", { class: "empty-state" }, h("span", { class: "spinner" })));
     var base = "/api/channels/" + c.id + "/queues/" + q.id;
@@ -1974,6 +2059,102 @@
     return h("div", { class: "head-actions" },
       h("a", { class: "btn btn-sm", href: "/api/channels/" + c.id + "/stats/players.csv" }, icon("download"), "Players CSV"),
       h("a", { class: "btn btn-sm", href: "/api/channels/" + c.id + "/stats/matches.csv" }, icon("download"), "Matches CSV"));
+  }
+
+  // The channel's game servers (channel setting `servers`), as IP:port. A queue can designate one of them; its address
+  // then comes first in the server information of the queue's matches.
+  var SERVER_RE = /^(?=[^:]{1,100}:)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?:(\d{1,5})$/;
+  function validServer(s) { var m = SERVER_RE.exec(s); return !!m && +m[1] >= 1 && +m[1] <= 65535; }
+
+  function renderServers(body, c) {
+    S.editor = null;
+    var editable = can("edit_channel", c);
+    body.appendChild(h("div", { class: "empty-state" }, h("span", { class: "spinner" })));
+    api("GET", "/api/channels/" + c.id).then(function (d) {
+      if (S.route.cid !== c.id || S.route.view !== "servers") return;
+      function fromValues(list) {
+        return (list || []).map(function (r) { return { address: r.address || "", label: r.label || "" }; });
+      }
+      var saved = fromValues(d.values.servers);
+      // Each row: its address and label, locked until its Edit button is pressed (new rows start unlocked).
+      var rows = saved.map(function (r) { return { address: r.address, label: r.label, editing: false }; });
+      var list = h("div", { class: "server-list" });
+      var err = fieldErr();
+      var saveBtn = h("button", { class: "btn btn-primary", type: "button", onclick: save }, icon("check"), "Save");
+      var addBtn = h("button", { class: "btn", type: "button", onclick: function () {
+        rows.push({ address: "", label: "", editing: true }); draw(rows.length - 1);
+      } }, icon("plus"), "Add server");
+
+      function usedBy(addr) {
+        return c.queues.filter(function (q) { return addr && q.designated_server === addr; }).map(function (q) { return q.name; });
+      }
+      var count = h("span", { class: "badge" });
+      function draw(focus) {
+        count.textContent = saved.length + " server" + (saved.length === 1 ? "" : "s");
+        clear(list);
+        if (!rows.length) list.appendChild(h("p", { class: "muted", style: "margin:0", text: editable ? "No servers yet. Press Add server to add one." : "No servers yet." }));
+        rows.forEach(function (row, i) {
+          var locked = !editable || !row.editing;
+          var addr = h("input", { type: "text", class: "mono", value: row.address, placeholder: "131.153.224.87:27970", spellcheck: "false", autocomplete: "off",
+            "aria-label": "Server " + (i + 1) + " address", disabled: locked,
+            oninput: function () { row.address = addr.value.trim(); addr.classList.toggle("bad", !!row.address && !validServer(row.address)); } });
+          if (row.address && !validServer(row.address)) addr.classList.add("bad");
+          var label = h("input", { type: "text", value: row.label, placeholder: "Label (optional), such as CA #1", maxlength: "40", autocomplete: "off",
+            "aria-label": "Server " + (i + 1) + " label", disabled: locked,
+            oninput: function () { row.label = label.value; } });
+          var users = usedBy(row.address);
+          list.appendChild(h("div", { class: "server-row" + (row.editing ? " editing" : "") },
+            addr, label,
+            h("span", { class: "muted server-used", text: users.length ? "Designated by " + users.join(", ") : "" }),
+            editable ? h("button", { class: "icon-btn" + (row.editing ? " on" : ""), type: "button",
+              title: row.editing ? "Done editing this server" : "Edit this server", "aria-label": (row.editing ? "Done editing " : "Edit ") + (row.address || "server " + (i + 1)),
+              onclick: function () { row.editing = !row.editing; draw(row.editing ? i : undefined); } }, icon(row.editing ? "check" : "edit")) : null,
+            editable ? h("button", { class: "icon-btn", type: "button", title: "Remove this server", "aria-label": "Remove server " + (row.address || i + 1),
+              onclick: function () { rows.splice(i, 1); draw(); } }, icon("trash")) : null));
+          if (focus === i) setTimeout(function () { addr.focus(); }, 0);
+        });
+      }
+      function save() {
+        var clean = [], seen = {};
+        for (var i = 0; i < rows.length; i++) {
+          var a = (rows[i].address || "").trim(), l = (rows[i].label || "").trim();
+          if (!a) continue;
+          if (!validServer(a)) return err.show("'" + a + "' is not a server address: use IP:port, such as 131.153.224.87:27970.");
+          if (l.length > 40) return err.show("The label of " + a + " is longer than 40 characters.");
+          if (!seen[a.toLowerCase()]) { seen[a.toLowerCase()] = true; clean.push({ address: a, label: l || null }); }
+        }
+        if (clean.length > 50) return err.show("A channel can have at most 50 servers.");
+        var kept = clean.map(function (r) { return r.address; });
+        var dropped = saved.filter(function (r) { return kept.indexOf(r.address) < 0 && usedBy(r.address).length; });
+        var ask = dropped.length ? confirmModal({ title: "Remove designated servers",
+          text: dropped.map(function (r) { return r.address + " is designated by " + usedBy(r.address).join(", "); }).join(". ") +
+            ". Their matches no longer show it until they designate another server.", ok: "Remove" }) : Promise.resolve(true);
+        ask.then(function (ok) {
+          if (!ok) return;
+          saveBtn.disabled = true;
+          api("PUT", "/api/channels/" + c.id, { values: { servers: clean } }).then(function (r) {
+            saved = fromValues(r.values.servers);
+            rows = saved.map(function (x) { return { address: x.address, label: x.label, editing: false }; });
+            err.show(null);
+            toast("Server List saved.");
+            return reloadGuild().then(function () { c = findChannel(c.id) || c; draw(); });
+          }).catch(function (e) { err.show(e.fields && e.fields.servers || e.message); })
+            .then(function () { saveBtn.disabled = false; });
+        });
+      }
+      draw();
+      clear(body);
+      append(body, h("section", { class: "panel" },
+        h("div", { class: "panel-head" }, h("h2", { text: "Server List" }), count),
+        h("div", { class: "field" },
+          h("p", { class: "f-desc", text: "This channel's game servers, as IP:port (such as 131.153.224.87:27970; a host name instead of the IP works too), " +
+            "each with an optional label to tell them apart in the web panel. Press the pencil to change a server. Each queue can designate one of them " +
+            "next to its name (queue Settings › General). When a match of that queue starts, the server's address (not its label) comes first in the " +
+            "match's server information, above the queue's Server text (Appearance)." }),
+          list,
+          editable ? h("div", { class: "key-actions" }, addBtn, saveBtn) : h("p", { class: "f-null", text: "Read-only: you don't have permission to change this channel's settings." }),
+          err)));
+    }).catch(function (e) { clear(body); append(body, h("div", { class: "flash flash-error", text: e.message })); });
   }
 
   function renderLeaderboard(body, c) {
@@ -2027,7 +2208,7 @@
         var other = m.players.filter(function (p) { return p.team !== 0 && p.team !== 1; }).map(function (p) { return p.nick; });
         var res = m.winner === 0 ? m.alpha : m.winner === 1 ? m.beta : (m.ranked ? "Draw" : "—");
         tbody.appendChild(h("tr", {},
-          h("td", { class: "rk", text: "#" + m.id }),
+          h("td", { class: "rk" }, "#" + m.id, m.slipgate ? [" ", h("a", { href: m.slipgate, target: "_blank", rel: "noopener noreferrer", class: "sg-link", title: "This match on Slipgate", text: "Slipgate" })] : null),
           h("td", { class: "date", text: fmtDate(m.at) }),
           h("td", {}, h("strong", { text: m.queue }), m.ranked ? h("span", { class: "badge ok", style: "margin-left:8px", text: "ranked" }) : null),
           h("td", { style: "font-size:13px" },
@@ -2060,7 +2241,7 @@
     this.values = values;
     this.draft = clone(values);
     this.open = {};
-    for (var k in this.vars) this.open[k] = values[k] !== null && values[k] !== undefined;
+    for (var k in this.vars) this.open[k] = values[k] !== null && values[k] !== undefined || this.vars[k].type === "server";
   };
   Editor.prototype.sameTarget = function (r) {
     return r.cid === this.cid && (r.qid || null) === (this.qid || null) && (this.qid || (r.view || "settings") === "settings");
@@ -2084,9 +2265,14 @@
   // On: the value is the number typed next to it (start says what switching it on fills in). Off: not set.
   var BAR_VARS = { panel_autorefresh: { label: "Auto-refresh panel", before: "every", after: "min", start: "5", min: 1, max: 1440 } };
 
+  Editor.prototype.sections = function () {
+    var hidden = HIDDEN_SECTIONS[this.kind] || [];
+    return this.schema.sections.filter(function (s) { return hidden.indexOf(s) < 0; });
+  };
+
   Editor.prototype.mount = function (el) {
     this.el = el;
-    var secs = this.schema.sections;
+    var secs = this.sections();
     var want = S.route.section;
     this.section = secs.find(function (s) { return slug(s) === want; }) || this.section || secs[0];
     this.render();
@@ -2095,7 +2281,7 @@
   Editor.prototype.render = function () {
     var self = this, el = clear(this.el);
     var chips = h("div", { class: "sections", role: "tablist" });
-    this.schema.sections.forEach(function (sec) {
+    this.sections().forEach(function (sec) {
       var names = self.schema.variables.filter(function (v) { return v.section === sec; }).map(function (v) { return v.name; });
       var err = names.some(function (n) { return self.errors[n]; });
       var dirty = names.some(function (n) { return self.isDirty(n); });
@@ -2115,8 +2301,13 @@
       if (self.errors[v.name]) barErrs.push(h("div", { class: "f-err bar-err" }, icon("alert"), self.errors[v.name]));
     });
     var panel = h("section", { class: "panel" });
+    var pairs = this.kind === "queue" ? { name: "designated_server" } : {};   // shown side by side
+    var paired = {};
+    Object.keys(pairs).forEach(function (k) { paired[pairs[k]] = true; });
     this.schema.variables.forEach(function (v) {
-      if (v.section === self.section && !BAR_VARS[v.name]) panel.appendChild(self.renderField(v));
+      if (v.section !== self.section || BAR_VARS[v.name] || paired[v.name]) return;
+      var partner = pairs[v.name] && self.vars[pairs[v.name]];
+      panel.appendChild(partner ? h("div", { class: "field-pair" }, self.renderField(v), self.renderField(partner)) : self.renderField(v));
     });
     this.bar = h("div");
     if (this.readOnly) {  // a disabled fieldset turns off every control inside it
@@ -2244,7 +2435,7 @@
     var f = h("div", { class: "field" + (this.isDirty(name) ? " dirty" : "") + (this.errors[name] ? " field-error" : ""), "data-name": name });
     var inline = v.type === "bool" && !v.nullable;
     var tools = [];
-    if (name !== "name") {
+    if (name !== "name" && v.type !== "server") {   // no default name; the server picker has its own "none" choice
       tools.push(h("button", { class: "icon-btn", type: "button", title: "Reset to default", "aria-label": "Reset " + v.display + " to default",
         onclick: function () {
           confirmModal({ title: "Reset " + v.display, text: "Reset this setting to its default value? It is saved immediately.", ok: "Reset" })
@@ -2252,7 +2443,8 @@
         } }, icon("reset")));
     }
     var sw = null;
-    if (v.nullable) {
+    var nullable = v.nullable && v.type !== "server";   // the server picker has its own "none" choice
+    if (nullable) {
       var cb = h("input", { type: "checkbox", checked: this.open[name], "aria-label": "Enable " + v.display,
         onchange: function () {
           self.open[name] = cb.checked;
@@ -2261,7 +2453,7 @@
         } });
       sw = h("label", { class: "switch", title: this.open[name] ? "Enabled" : "Disabled" }, cb, h("span"));
     }
-    var head = h("div", { class: "f-head" },
+    var head = h("div", { class: "f-head" + (v.type === "server" ? " wrap-narrow" : "") },   // long title: name and reset below it on phones
       h("span", { class: "f-title", text: v.display }),
       h("code", { class: "f-name", text: name }),
       tools, h("span", { class: "grow" }), sw);
@@ -2274,6 +2466,8 @@
     }
     if (inline) {
       append(f, h("div", { class: "f-row-inline" }, h("div", {}, head, desc), body));
+    } else if (v.type === "server") {
+      append(f, [head, body, desc]);   // beside the queue name: the drop-down lines up with the name field
     } else {
       append(f, [head, desc, body]);
     }
@@ -2307,6 +2501,7 @@
       case "role": return rolePicker(val, function (x) { self.set(name, x); });
       case "channel": return channelPicker(val, function (x) { self.set(name, x); });
       case "voice": return voicePicker(val, function (x) { self.set(name, x); });
+      case "server": return serverPicker(this, val, function (x) { self.set(name, x); });
       case "table": return this.table(v);
       default:
         return h("input", { type: "text", value: val === null ? "" : val, autocomplete: "off", spellcheck: "false",
@@ -2363,6 +2558,20 @@
     return picker({ kind: "channel", value: val, placeholder: "Select a channel…", missing: "Missing channel", allowNone: true, noneLabel: "No channel",
       items: S.guild.text_channels.map(function (c) { return { id: c.id, name: c.name, meta: c.category || "" }; }),
       onChange: onChange });
+  }
+
+  // A queue's designated server: one of its channel's Server List entries (or none).
+  function serverPicker(ed, val, onChange) {
+    var c = findChannel(ed.cid) || { servers: [] };
+    var list = (c.servers || []).map(function (s) { return typeof s === "string" ? { address: s, label: null } : s; });
+    var listed = list.map(function (s) { return s.address; });
+    var sel = h("select", { onchange: function () { onChange(sel.value || null); } },
+      h("option", { value: "", selected: !val, text: list.length ? "No designated server" : "No servers yet (add them on the channel's Server List tab)" }),
+      list.map(function (s) {   // the label helps tell servers apart; only the address is stored and shown in Discord
+        return h("option", { value: s.address, selected: s.address === val, text: s.address + (s.label ? "  —  " + s.label : "") });
+      }),
+      val && listed.indexOf(val) < 0 ? h("option", { value: val, selected: true, text: val + " (not on the Server List, not used)" }) : null);
+    return sel;
   }
 
   function voicePicker(val, onChange) {

@@ -15,7 +15,8 @@ the original PUBobot2 layout is still available.
 - **The teams side by side**, with the team emojis and names, their average rating and, per player, the
   rank, the rating and 👑 for the captain.
 - **The maps**, numbered.
-- **The server**: the queue's **Server** setting (`server`), one line at a time:
+- **The server**: the queue's [designated server](../web-panel/overview.md#server-list), if it has one, on the
+  first line, then its **Server** setting (`server`), one line at a time:
 
     | Line | Shown as |
     |---|---|
@@ -41,7 +42,7 @@ the original PUBobot2 layout is still available.
 
 Channel settings → **Messages** → *Match start message* (`match_embed_style`): `modern` (the FragQ layout)
 or `classic` (the original PUBobot2 layout). *Ping players on match start* only applies to the modern
-layout.
+layout. The classic layout shows each server line in its own code box.
 
 ## Direct messages
 
