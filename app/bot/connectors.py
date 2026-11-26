@@ -887,6 +887,74 @@ def steam_links(c):
 	return dict(ok=True, links=out)
 
 
+MATCH_STATES = {0: "init", 1: "check_in", 2: "draft", 3: "waiting_report"}
+
+
+async def active_matches(c, data):
+	"""
+	POST /match: {"queue": "name"} (optional). The FragQ matches of the connector's queues that a game server can
+	be playing now, newest first, with each player's team (0 or 1 for the match's two teams, null while unpicked)
+	so it can check who belongs on its teams. Team 0/1 are FragQ's teams, not the game's red/blue.
+
+	Matches still in FragQ (check-in, draft, a ranked match waiting for its report) have "finished": false. An
+	unranked match leaves FragQ as soon as its teams are set, which is when the game starts, so the unranked
+	matches started within MATCH_WINDOW are listed too, from the match history, with "finished": true and state
+	"started". Without them a game server would see no match for the whole of an unranked game.
+	"""
+	name = data.get("queue") if isinstance(data, dict) else None
+	if name is not None and not isinstance(name, str):
+		raise ConnectorError(400, "'queue' must be a queue name.")
+	queues = queue_objects(c)
+	if name is not None and name.strip():
+		named = [q for q, _ in queues if q.name.casefold() == name.strip().casefold()]   # any case, like /voice
+		if not named:
+			raise ConnectorError(400, f"This connector has no queue named '{name[:60]}'. Its queues: "
+									  f"{', '.join(q.name for q, _ in queues) or 'none'}.")
+		if len(named) > 1:
+			raise ConnectorError(400, f"This connector has {len(named)} queues named '{named[0].name}', in different "
+									  "channels. Give each server its own connector, or rename one of the queues.")
+		queue_ids = {named[0].id}
+	else:
+		queue_ids = {q.id for q, _ in queues}
+	steam_by_user = {uid: r["steam_id"] for uid, r in bot.steam.links.items()}
+	out = []
+	for m in (m for m in bot.active_matches if m.queue.id in queue_ids):
+		team_of = {p.id: idx for idx in (0, 1) for p in m.teams[idx] if p}
+		out.append(dict(
+			match_id=m.id, queue=m.queue.name, state=MATCH_STATES.get(m.state, str(m.state)), finished=False,
+			started_at=m.start_time, team_names=[m.teams[0].name, m.teams[1].name],
+			players=[dict(discord_id=str(p.id), discord_name=get_nick(p), steam_id=steam_by_user.get(p.id),
+						  team=team_of.get(p.id)) for p in m.players if p],
+		))
+
+	live = {m["match_id"] for m in out}
+	by_qid = {q.id: qc for q, qc in queues}
+	channels = sorted({by_qid[qid].id for qid in queue_ids if qid in by_qid})
+	if channels:
+		rows = await db.fetchall(
+			"SELECT m.match_id, m.queue_id, m.queue_name, m.alpha_name, m.beta_name, m.at, p.user_id, p.nick, p.team "
+			"FROM `qc_matches` AS m JOIN `qc_player_matches` AS p ON p.match_id=m.match_id AND p.channel_id=m.channel_id "
+			f"WHERE m.ranked=0 AND m.at>=%s AND m.channel_id IN ({', '.join(['%s'] * len(channels))})",
+			(int(time.time()) - MATCH_WINDOW, *channels)
+		)
+		guild = dc.get_guild(c["guild_id"])
+		found = {}
+		for r in rows:
+			if r["match_id"] in live or r["queue_id"] not in queue_ids:
+				continue
+			m = found.setdefault(r["match_id"], dict(
+				match_id=r["match_id"], queue=r["queue_name"], state="started", finished=True, started_at=r["at"],
+				team_names=[r["alpha_name"], r["beta_name"]], players=[]))
+			member = guild.get_member(r["user_id"]) if guild else None
+			team = r["team"]
+			m["players"].append(dict(
+				discord_id=str(r["user_id"]), discord_name=get_nick(member) if member else r["nick"],
+				steam_id=steam_by_user.get(r["user_id"]), team=int(team) if team is not None else None))
+		out.extend(found.values())
+	out.sort(key=lambda m: m["started_at"] or 0, reverse=True)
+	return dict(ok=True, matches=out)
+
+
 def _link_answer(status, message, **extra):
 	return dict(ok=status in ("sent", "already_linked"), status=status, message=message, **extra)
 

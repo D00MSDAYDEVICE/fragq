@@ -89,7 +89,16 @@ DB_URL = "minqlx:fragq:url"
 DB_KEY = "minqlx:fragq:key"
 DB_ENFORCE = "minqlx:fragq:enforce"
 DB_INVITE = "minqlx:fragq:invite"
+DB_FRAGDEX_URL = "minqlx:fragdex:url"   # written by fragdex.py; read only here
+DB_FRAGDEX_KEY = "minqlx:fragdex:key"
 TIMEOUT = 10              # seconds per HTTP request
+MAX_RESPONSE = 1 << 20    # bytes of a reply read at most
+FRAGDEX_BATCH = 100       # Steam IDs per Fragdex POST /players/lookup (server limit)
+QV_CONFIRM_DELAY = 1.5    # seconds after !queueverify's moves to check they stuck (queue plugins react after 0.5 s)
+QV_PLAYING = {"started", "waiting_report"}   # teams set and the game on: what the server should match
+QV_PRE_GAME = {"init", "check_in", "draft"}  # still in Discord
+QV_TAG = "^1QVerify:^7"
+WHOIS_COOLDOWN = 3        # between !whois commands of the same player
 FINAL_STATS_WAIT = 3      # PLAYER_STATS of everyone still playing arrive just after MATCH_REPORT
 RESULT_RETRIES = (5, 30, 120, 600)   # seconds before each new attempt while FragQ is unreachable
 MAX_OUTBOX = 10
@@ -103,6 +112,8 @@ VOICE_SETTLE = 3          # seconds after the last team change before the teams 
 VOICE_COOLDOWN = 5        # between !voice commands
 VOICE_TARGETS = {"red", "blue", "lobby"}
 COLOR_RE = re.compile(r"\^[0-9]")
+STEAM2_RE = re.compile(r"^STEAM_[0-5]:([01]):(\d{1,10})\Z", re.I)
+STEAM64_BASE = 76561197960265728
 DISCORD_RE = re.compile(r"^(?:\d{15,21}|[A-Za-z0-9_.]{2,32})\Z")
 INVITE_RE = re.compile(r"^(?:https?://)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com/invite)/([A-Za-z0-9-]{2,32})/?\Z", re.I)
 # game.type_short of the team modes: a str on minqlx, a Gametype StrEnum on minqlxtended (str() gives the same
@@ -139,6 +150,7 @@ def _text(s):
 
 
 def _clean(s):
+    """Colour codes removed: for logs, database keys, FragQ / Fragdex payloads and lookups. Never for chat."""
     return COLOR_RE.sub("", str(s or ""))
 
 
@@ -151,6 +163,41 @@ def _opt(label, value):
     """One status line: the option in cyan, its setting in white (on/yes green, off/no red)."""
     colour = {"on": "^2", "yes": "^2", "off": "^1", "no": "^1"}.get(str(value), "^7")
     return f"^5{label}:{colour} {value}^7"
+
+
+def _colored(s):
+    """A player name for chat (tell, center_print, msg, channel.reply): ^0-^7 kept, % made safe, and the colour
+    reset to white after it so the rest of the line isn't painted in the name's last colour."""
+    s = _text(s or "")
+    return s + "^7" if COLOR_RE.search(s) else s
+
+
+def _steam64(token):
+    """A SteamID64 or STEAM_X:Y:Z -> the SteamID64 string, or None."""
+    s = str(token or "").strip()
+    if _is_steam_id(s):
+        return s
+    m = STEAM2_RE.match(s)
+    if m:
+        sid = str(STEAM64_BASE + int(m.group(2)) * 2 + int(m.group(1)))
+        return sid if _is_steam_id(sid) else None
+    return None
+
+
+def _fragdex_api_url(url):
+    """'fragdex.example.com', 'https://host' or '.../api/v1' -> the Fragdex API base URL ending in /api/v1, '' when
+    unset, or None when it isn't a web address. The same as fragdex.py's."""
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "https://" + url
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+        return None
+    while url.endswith("/api/v1"):
+        url = url[:-len("/api/v1")].rstrip("/")
+    return url + "/api/v1"
 
 
 def _invite(text):
@@ -217,6 +264,131 @@ def _num(d, *path):
     return d if isinstance(d, (int, float)) and not isinstance(d, bool) else 0
 
 
+# ---------------------------------------------------------------- !queueverify: the decision (pure, no game state)
+
+def qverify_plan(roster, on_server, discord_of, lookup_ok=True, protected=()):
+    """
+    roster:     {discord_id: fragq team 0 / 1 / None} of the FragQ match
+    on_server:  [(client_id, steam_id, name, team)] with team 'red' / 'blue' / 'spectator' / ...
+    discord_of: {steam_id: discord_id} for the players that could be resolved
+    lookup_ok:  False when Fragdex couldn't be asked: then a missing mapping proves nothing
+    protected:  subs (!sub), {sub Steam ID: replaced Steam ID or None} (a plain list of Steam IDs is fine too).
+                - A sub for a named player takes that player's place in the PUG, with their FragQ team.
+                - A sub without one is never moved, and on a team covers one PUG slot.
+
+    Returns a dict:
+      switch      [(out_entry, in_entry)]: a non-PUG player on a team and the PUG spectator who takes their slot
+      evict       non-PUG players on a team with no PUG spectator to swap with: to spectator
+      place       [(entry, 'red'|'blue')]: PUG spectators whose side is known, with nobody there to swap with
+      wait        [(entry, reason)]: PUG spectators with nobody to swap with and no known side: prompted
+      unverified  entries on a team without a mapping while Fragdex was down (left alone)
+      subs        protected subs on a team (left alone)
+      covered     PUG spectators not brought in because a sub has their slot
+      missing     Discord IDs of the PUG not on the server
+      sides       {0: 'red'|'blue', 1: ...} or None, and sides_why when None
+
+    FragQ gives teams as 0/1, not Red/Blue: a side is known only when every PUG player already on a team agrees
+    (all of team 0 on one colour, all of team 1 on the other). Anything else is never guessed.
+    """
+    evict, pull, unverified, subs, present = [], [], [], [], set()
+    protected = dict(protected) if isinstance(protected, dict) else dict.fromkeys(protected)
+    replaced = {rep: sub for sub, rep in protected.items() if rep}   # replaced Steam ID -> their sub
+    member_fq = {}   # Steam ID -> FragQ team of everyone on the server who holds a PUG place
+    for entry in on_server:
+        _, sid, _, team = entry
+        did = discord_of.get(sid)
+        playing = team in ("red", "blue")
+        if sid in replaced and sid not in protected:     # subbed out: their place went to the sub
+            if did in roster:
+                present.add(did)
+            if playing:
+                evict.append(entry)
+            continue
+        if protected.get(sid):                           # subbed in for a named player: holds their place
+            rdid = discord_of.get(protected[sid])
+            if rdid in roster:
+                present.add(rdid)
+            member_fq[sid] = roster.get(rdid)
+            if not playing:
+                pull.append(entry)
+            continue
+        if sid in protected and did not in roster:
+            if playing:
+                subs.append(entry)
+            continue
+        if did is None:
+            if playing:
+                (evict if lookup_ok else unverified).append(entry)
+            continue
+        if did in roster:
+            present.add(did)
+            member_fq[sid] = roster[did]
+            if not playing:
+                pull.append(entry)
+        elif playing:
+            evict.append(entry)
+
+    # FragQ's team 0/1 -> Red/Blue, only from unanimous evidence.
+    count = collections.Counter()
+    for _, sid, _, team in on_server:
+        fq = member_fq.get(sid)
+        if fq in (0, 1) and team in ("red", "blue"):
+            count[(fq, team)] += 1
+    straight = count[(0, "red")] + count[(1, "blue")]
+    crossed = count[(0, "blue")] + count[(1, "red")]
+    sides, sides_why = None, None
+    if straight and not crossed:
+        sides = {0: "red", 1: "blue"}
+    elif crossed and not straight:
+        sides = {0: "blue", 1: "red"}
+    elif straight and crossed:
+        sides_why = "the PUG's teams are mixed across Red and Blue"
+    else:
+        sides_why = "no PUG player is on a team yet"
+
+    # Pair each PUG spectator with a player to remove. One whose side is known only takes a slot on that side.
+    # A sub for a named player takes exactly that player's slot when they're still on a team.
+    out_left, switch, place, wait, unpaired = list(evict), [], [], [], []
+    for entry in list(pull):
+        partner = next((e for e in out_left if e[1] == protected.get(entry[1])), None)
+        if partner is not None:
+            out_left.remove(partner)
+            pull.remove(entry)
+            switch.append((partner, entry))
+    for entry in pull:
+        fq = member_fq.get(entry[1])
+        side = sides[fq] if sides is not None and fq in (0, 1) else None
+        if side is not None:
+            partner = next((e for e in out_left if e[3] == side), None)
+            if partner is not None:
+                out_left.remove(partner)
+                switch.append((partner, entry))
+            else:
+                place.append((entry, side))
+        else:
+            unpaired.append((entry, fq))
+    for entry, fq in unpaired:
+        if out_left:
+            switch.append((out_left.pop(0), entry))
+        elif fq not in (0, 1):
+            wait.append((entry, "teams not picked in FragQ"))
+        else:
+            wait.append((entry, sides_why))
+
+    # A sub on a team fills the slot of the PUG player they replaced: don't add that player on top of them.
+    covered = []
+    for sub in subs:
+        hit = next((x for x in place if x[1] == sub[3]), None)
+        if hit is not None:
+            place.remove(hit)
+            covered.append(hit[0])
+        elif wait:
+            covered.append(wait.pop(0)[0])
+    return dict(switch=switch, evict=out_left, place=place, wait=wait, unverified=unverified, subs=subs,
+                covered=covered, sides=sides, sides_why=sides_why, member_fq=member_fq,
+                missing=[did for did in roster if did not in present])
+
+
 class fragq(ql.Plugin):
     def __init__(self):
         super().__init__()
@@ -233,6 +405,12 @@ class fragq(ql.Plugin):
         self.set_cvar_once("qlx_fragqVoice", "0")
         self.set_cvar_once("qlx_voicemoveperm", "4")
         self.set_cvar_once("qlx_fragqQueue", "")
+        self.set_cvar_once("qlx_fragqQverifyLevel", "")   # empty: qlx_fragqAdminLevel
+        self.set_cvar_once("qlx_fragqWhoisLevel", "0")
+        # Shared with fragdex.py; set_cvar_once never overwrites a value it has set.
+        self.set_cvar_once("qlx_fragdexUrl", "")
+        self.set_cvar_once("qlx_fragdexKey", "")
+        self.set_cvar_once("qlx_fragdexVerifyTls", "1")
 
         # Shared with the worker thread. Cvars and the database are read on the game thread (load_config)
         # and handed over as a plain dict; the stats hook (the ZMQ thread on minqlx, the main thread on minqlxtended) only updates dicts.
@@ -256,6 +434,12 @@ class fragq(ql.Plugin):
         self._voice_sent = None        # {team: frozenset of SteamIDs} last sent, so game start doesn't repeat the countdown
         self._voice_event = "none since the plugin loaded"
         self._voice_cmd_at = 0.0
+        self._qv_busy = False          # a !queueverify / !sub check is running (set on the game thread, cleared by the worker)
+        # !sub: Steam ID -> (raw name, replaced Steam ID or None, replaced raw name or None), game thread only,
+        # for the FragQ match in _subs_match. Cleared when !queueverify finds a different match.
+        self._subs = {}
+        self._subs_match = None
+        self._whois_at = {}            # steam_id -> time of the last !whois
         self._stop = threading.Event()
         self._wake = threading.Event()
         self.load_config()
@@ -276,6 +460,11 @@ class fragq(ql.Plugin):
         self.add_command("setdiscord", self.cmd_setdiscord, usage="<invite URL> | off")
         self.add_command("fragq", self.cmd_fragq, usage="[url <url> | key <key> | test | queue]")
         self.add_command("voice", self.cmd_voice, usage="teams | lobby | <player id> red|blue|lobby [queue]")
+        self.add_command(("queueverify", "qv"), self.cmd_queueverify, usage="[dry|status]")
+        self.add_command("sub", self.cmd_sub, usage="<player id> [<player id it replaces>] | off <player id> | clear")
+        self.add_command("unsub", self.cmd_unsub, usage="<player id>")
+        self.add_command("whois", self.cmd_whois,
+                         usage="<player id | Steam ID | Discord id | Discord username | part of a name>")
 
         self._thread = threading.Thread(target=self._worker, name="fragq", daemon=True)
         self._thread.start()
@@ -286,9 +475,11 @@ class fragq(ql.Plugin):
         try:
             url, key, enforce = self.db.get(DB_URL), self.db.get(DB_KEY), self.db.get(DB_ENFORCE)
             invite = self.db.get(DB_INVITE)
+            dex_url, dex_key = self.db.get(DB_FRAGDEX_URL), self.db.get(DB_FRAGDEX_KEY)
         except Exception:  # noqa: BLE001 - no database configured: cvars only
             self.logger.warning("fragq: database unavailable, using the qlx_fragq* cvars")
-            url = key = enforce = invite = None
+            url = key = enforce = invite = dex_url = dex_key = None
+        admin_level = _int(self.get_cvar("qlx_fragqAdminLevel"), 3)
         cfg = {
             "url": _api_url(url or self.get_cvar("qlx_fragqUrl")) or "",
             "key": (key or self.get_cvar("qlx_fragqKey") or "").strip(),
@@ -297,13 +488,18 @@ class fragq(ql.Plugin):
             "min_players": max(1, _int(self.get_cvar("qlx_fragqMinPlayers"), 2)),
             "min_shots": max(1, _int(self.get_cvar("qlx_fragqMinShots"), 50)),
             "enforce": (str(enforce) == "1") if enforce is not None else _int(self.get_cvar("qlx_fragqEnforceLink"), 0) != 0,
-            "admin_level": _int(self.get_cvar("qlx_fragqAdminLevel"), 3),
+            "admin_level": admin_level,
+            "qverify_level": _int(self.get_cvar("qlx_fragqQverifyLevel"), admin_level),   # empty: the admin level
+            "whois_level": _int(self.get_cvar("qlx_fragqWhoisLevel"), 0),
             # "" in the database: removed with !setdiscord off, don't fall back to the cvar
             "invite": _invite(self.get_cvar("qlx_fragqDiscordInvite")) if invite is None else _invite(invite),
             "verify_tls": _int(self.get_cvar("qlx_fragqVerifyTls"), 1) != 0,
             "voice": _int(self.get_cvar("qlx_fragqVoice"), 0) != 0,
             "voice_perm": _int(self.get_cvar("qlx_voicemoveperm"), 4),
             "queue": " ".join(_clean(self.get_cvar("qlx_fragqQueue")).split())[:60],
+            "fragdex_url": _fragdex_api_url(dex_url or self.get_cvar("qlx_fragdexUrl")) or "",
+            "fragdex_key": (dex_key or self.get_cvar("qlx_fragdexKey") or "").strip(),
+            "fragdex_tls": _int(self.get_cvar("qlx_fragdexVerifyTls"), 1) != 0,
         }
         with self._lock:
             self._cfg = cfg
@@ -362,6 +558,7 @@ class fragq(ql.Plugin):
         sid = str(player.steam_id)
         self._watch.pop(sid, None)
         self._warned.pop(sid, None)
+        self._whois_at.pop(sid, None)
 
     def handle_team_switch_attempt(self, player, old_team, new_team, *_):
         if not self._cfg.get("enforce") or _team(new_team) == "spectator":
@@ -764,23 +961,42 @@ class fragq(ql.Plugin):
     # ------------------------------------------------------------ HTTP (worker threads only)
 
     def _request(self, cfg, method, path, body=None):
-        """Returns (data, error, status). Never raises."""
+        """FragQ connector API. Returns (data, error, status). Never raises."""
         if not cfg.get("url") or not cfg.get("key"):
             return None, "FragQ address or connector key not set (!fragq url / !fragq key)", 0
+        return self._http(cfg["url"], cfg["key"], cfg.get("verify_tls", True), method, path, body)
+
+    def _fragdex(self, cfg, method, path, body=None):
+        """Fragdex API (a different service, key and reply shape from FragQ). Returns (data, error, status)."""
+        if not cfg.get("fragdex_url") or not cfg.get("fragdex_key"):
+            return None, "Fragdex address or key not set (qlx_fragdexUrl / qlx_fragdexKey)", 0
+        return self._http(cfg["fragdex_url"], cfg["fragdex_key"], cfg.get("fragdex_tls", True), method, path, body)
+
+    @staticmethod
+    def _http(base, key, verify_tls, method, path, body=None):
+        """Returns (data, error, status), data always a dict. Never raises. Status 0: no HTTP answer at all."""
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(cfg["url"] + path, data=data, method=method, headers={
-            "Authorization": "Bearer " + cfg["key"], "Content-Type": "application/json",
+        req = urllib.request.Request(base + path, data=data, method=method, headers={
+            "Authorization": "Bearer " + key, "Content-Type": "application/json",
             "Accept": "application/json", "User-Agent": f"fragq-{RUNTIME}/{VERSION}"})
-        ctx = None if cfg.get("verify_tls", True) else ssl._create_unverified_context()  # noqa: S323 - opt-in
+        ctx = None if verify_tls else ssl._create_unverified_context()  # noqa: S323 - opt-in
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT, context=ctx) as resp:
-                return json.loads(resp.read().decode("utf-8")), None, resp.status
+                raw, status = resp.read(MAX_RESPONSE + 1), resp.status
+            if len(raw) > MAX_RESPONSE:
+                return None, "the answer was too large", status
+            payload = json.loads(raw.decode("utf-8"))
+            if not isinstance(payload, dict):
+                return None, "the answer wasn't a JSON object", status
+            return payload, None, status
         except urllib.error.HTTPError as e:
             try:
-                msg = json.loads(e.read().decode("utf-8")).get("error") or e.reason
-            except Exception:  # noqa: BLE001 - not a FragQ reply (proxy page etc.)
+                reply = json.loads(e.read(65536).decode("utf-8"))
+                msg = (reply.get("error") or reply.get("detail") or e.reason) if isinstance(reply, dict) else e.reason
+            except Exception:  # noqa: BLE001 - not a JSON reply (proxy page etc.)
                 msg = e.reason
-            return None, f"HTTP {e.code}: {msg}", e.code
+            retry = e.headers.get("Retry-After") if e.headers else None
+            return None, f"HTTP {e.code}: {msg}" + (f" (retry after {retry}s)" if retry else ""), e.code
         except Exception as e:  # noqa: BLE001 - network errors, bad JSON, TLS
             return None, str(getattr(e, "reason", e))[:200], 0
 
@@ -1101,6 +1317,10 @@ class fragq(ql.Plugin):
 
     @ql.next_frame
     def _reply(self, reply_to, *lines):
+        self._reply_lines(reply_to, lines)
+
+    def _reply_lines(self, reply_to, lines):
+        """_reply when already on the game thread. Colour codes are kept; only % is made safe."""
         if reply_to[0] == "console":
             for line in lines:
                 reply_to[1].reply(_text(line))
@@ -1113,11 +1333,641 @@ class fragq(ql.Plugin):
 
     def _tell_now(self, targets, lines):
         for client_id, steam_id in targets:
-            try:
-                p = self.player(client_id)
-            except Exception:  # noqa: BLE001 - NonexistentPlayerError: they left
+            p = self._slot_player(client_id, steam_id)
+            if p is not None:
+                for line in lines:
+                    p.tell(_text(line))
+
+    def _slot_player(self, client_id, steam_id):
+        """The player in this client slot if it's still the same Steam account, else None (game thread)."""
+        try:
+            p = self.player(client_id)
+        except Exception:  # noqa: BLE001 - NonexistentPlayerError: they left
+            return None
+        return p if p is not None and str(p.steam_id) == str(steam_id) else None   # else: the slot changed hands
+
+    def _client(self, arg):
+        """The player with a Steam account in client slot `arg` (a string from chat), or None (game thread)."""
+        cid = _int(arg, -1)
+        if not 0 <= cid < 64 or not str(arg).strip().isdigit():
+            return None
+        try:
+            p = self.player(cid)
+        except Exception:  # noqa: BLE001 - NonexistentPlayerError: empty slot
+            return None
+        return p if p is not None and _is_steam_id(p.steam_id) else None
+
+    # ------------------------------------------------------------ !queueverify, !sub, !unsub
+
+    def _qv_allowed(self, player):
+        level = self._cfg.get("qverify_level", self._cfg.get("admin_level", 3))
+        if self.db.has_permission(player, level):
+            return True
+        player.tell(f"{QV_TAG} that needs permission level {level}.")
+        return False
+
+    def _qv_snapshot(self):
+        """[(client id, Steam ID, raw name, team)] of everyone on the server (game thread). The name keeps its
+        colours: _colored() it for chat, _clean() it for logs."""
+        return [(p.id, str(p.steam_id), str(p.name or ""), _team(p.team))
+                for p in self.players() if _is_steam_id(p.steam_id)]
+
+    def _qv_start(self, player, channel, cfg, players, mode, extra=()):
+        """Hand one check to a worker thread, unless one is running (game thread). True when started."""
+        with self._lock:
+            if self._qv_busy:
+                player.tell(f"{QV_TAG} a check is already running, try again in a moment.")
+                return False
+            self._qv_busy = True
+        self._qverify_job(self._reply_target(player, channel), cfg, players, mode, list(extra))
+        return True
+
+    def cmd_queueverify(self, player, msg, channel):
+        if not self._qv_allowed(player):
+            return STOP_ALL
+        sub = msg[1].lower() if len(msg) > 1 else ""
+        if sub and sub not in ("status", "dry", "check", "test"):
+            player.tell(f"{QV_TAG} usage: ^5!queueverify^7 (check and fix the teams), ^5!queueverify dry^7 (only report), "
+                        "^5!queueverify status^7 (the key's queues and permissions).")
+            return STOP_ALL
+        mode = "status" if sub == "status" else "dry" if sub else "fix"
+        cfg = self.load_config()
+        if not cfg.get("url") or not cfg.get("key"):
+            player.tell(f"{QV_TAG} FragQ address or connector key not set (^5!fragq url^7 / ^5!fragq key^7).")
+            return STOP_ALL
+        players = self._qv_snapshot()
+        if not players and mode != "status":
+            player.tell(f"{QV_TAG} nobody to check.")
+            return STOP_ALL
+        # Replaced players are looked up too, so a sub keeps their FragQ team after they disconnect.
+        replaced = [rep for _, rep, _ in self._subs.values() if rep]
+        if self._qv_start(player, channel, cfg, players, mode, replaced):
+            player.tell(f"{QV_TAG} asking FragQ..." if mode == "status" else
+                        f"{QV_TAG} checking the teams against FragQ" +
+                        (f" (queue {_text(cfg['queue'])})..." if cfg.get("queue") else "..."))
+        return STOP_ALL
+
+    def _sub_label(self, sid):
+        name, _, rep_name = self._subs[sid]
+        return f"{_colored(name)} (for {_colored(rep_name)})" if rep_name else _colored(name)
+
+    def cmd_sub(self, player, msg, channel):
+        """!sub <id> [<id2>]: <id> is subbing in the current PUG (for <id2>). See the module docstring."""
+        if not self._qv_allowed(player):
+            return STOP_ALL
+        usage = (f"{QV_TAG} usage: ^5!sub <player id>^7 (a sub: never moved), ^5!sub <player id> <id of the player they "
+                 "replace>^7, ^5!sub off <player id>^7, ^5!sub clear^7, or ^5!sub^7 to list. Ids are shown by /players.")
+        args = [a.lower() for a in msg[1:]]
+        if not args:
+            listed = ", ".join(self._sub_label(sid) for sid in self._subs) or "none"
+            player.tell(f"{QV_TAG} subs: {listed}.")
+            return STOP_ALL
+        if args[0] == "clear":
+            self._subs.clear()
+            player.tell(f"{QV_TAG} subs cleared.")
+            return STOP_ALL
+        remove = args[0] in ("off", "remove", "del")
+        if (remove and len(args) != 2) or (not remove and len(args) > 2):
+            player.tell(usage)
+            return STOP_ALL
+        target_arg = args[1] if remove else args[0]
+        target = self._client(target_arg)
+        if target is None:
+            player.tell(_text(f"{QV_TAG} no player with id {target_arg[:10]}. Player ids are shown by /players."))
+            return STOP_ALL
+        sid, name = str(target.steam_id), str(target.name or "")
+        if remove:
+            player.tell(self._unsub(sid, name))
+            return STOP_ALL
+        rep_sid = rep_name = None
+        if len(args) > 1:
+            replaced = self._client(args[1])
+            if replaced is None:
+                player.tell(_text(f"{QV_TAG} no player with id {args[1][:10]}. Player ids are shown by /players."))
+                return STOP_ALL
+            rep_sid, rep_name = str(replaced.steam_id), str(replaced.name or "")
+            if rep_sid == sid:
+                player.tell(f"{QV_TAG} a player can't sub for themselves.")
+                return STOP_ALL
+        # A player who is in the PUG needs no protection: ask FragQ first, then add on the game thread.
+        cfg = self.load_config()
+        request = (sid, name, target.id, rep_sid, rep_name)
+        if self._qv_start(player, channel, cfg, self._qv_snapshot(), "sub", [request]):
+            player.tell(f"{QV_TAG} checking whether {_colored(name)} is already in the PUG...")
+        return STOP_ALL
+
+    def cmd_unsub(self, player, msg, channel):
+        if not self._qv_allowed(player):
+            return STOP_ALL
+        if len(msg) != 2:
+            player.tell(f"{QV_TAG} usage: ^5!unsub <player id>^7 (the sub, or the player they replaced).")
+            return STOP_ALL
+        target = self._client(msg[1])
+        if target is None:
+            player.tell(_text(f"{QV_TAG} no player with id {msg[1][:10]}. Player ids are shown by /players."))
+            return STOP_ALL
+        player.tell(self._unsub(str(target.steam_id), str(target.name or "")))
+        return STOP_ALL
+
+    @ql.next_frame
+    def _finish_sub(self, reply_to, request, found):
+        """Add the sub unless FragQ says they're already in the PUG (game thread)."""
+        sid, name, _, rep_sid, rep_name = request
+        if isinstance(found, str):   # couldn't check: add anyway, extra protection does no harm
+            self._add_sub(reply_to, request, f" (couldn't check the PUG: {found.rstrip('.')})")
+            return
+        roster, discord_of, info = found
+        if discord_of.get(sid) in roster:
+            self.logger.info("fragq: qverify: %s (%s) is in FragQ match %s; not added as a sub.",
+                             _clean(name), sid, info["match_id"])
+            why = (f"; to take {_colored(rep_name)}'s place they'd have to leave it" if rep_sid else
+                   ": !queueverify already keeps them on their team")
+            self._reply_lines(reply_to, [f"{QV_TAG} {_colored(name)} is in the PUG (FragQ match #{info['match_id']}), "
+                                         f"so they don't need sub protection{why}."])
+            return
+        self._add_sub(reply_to, request, "")
+
+    def _add_sub(self, reply_to, request, note):
+        sid, name, client_id, rep_sid, rep_name = request
+        if rep_sid:
+            # The replaced player gives up their place: they're no longer a sub, and nobody else subs for them.
+            self._subs.pop(rep_sid, None)
+            for other, (_, other_rep, _) in list(self._subs.items()):
+                if other_rep == rep_sid and other != sid:
+                    del self._subs[other]
+        self._subs[sid] = (name, rep_sid, rep_name)
+        if rep_sid:
+            self.logger.info("fragq: qverify: %s (%s) subs for %s (%s).", _clean(name), sid, _clean(rep_name), rep_sid)
+            line = (f"{QV_TAG} {_colored(name)} subs for {_colored(rep_name)}: !queueverify keeps {_colored(name)} in the "
+                    f"PUG and takes {_colored(rep_name)} out (switching them if they're still on a team){note}.")
+        else:
+            self.logger.info("fragq: qverify: %s (%s) marked as a sub.", _clean(name), sid)
+            line = (f"{QV_TAG} {_colored(name)} is a sub: !queueverify won't move them, and switches the next player who "
+                    f"doesn't belong instead{note}.")
+        self._reply_lines(reply_to, [line])
+        if not (reply_to[0] == "player" and reply_to[1] == client_id):
+            self._tell_now([(client_id, sid)], [f"{QV_TAG} you're subbing in this PUG" +
+                                                (f" for {_colored(rep_name)}" if rep_name else "") +
+                                                ": you won't be moved off your team."])
+
+    def _unsub(self, sid, name):
+        """Undo a sub (game thread). Returns the reply. `sid` is the sub, or the player someone subs for. The
+        player they subbed for gets protection back, as a plain sub."""
+        if sid not in self._subs:
+            sid = next((s for s, (_, rep, _) in self._subs.items() if rep == sid), None)
+            if sid is None:
+                return f"{QV_TAG} {_colored(name)} isn't a sub, and nobody subs for them."
+        sub_name, rep_sid, rep_name = self._subs.pop(sid)
+        if rep_sid is None:
+            self.logger.info("fragq: qverify: %s (%s) is no longer a sub.", _clean(sub_name), sid)
+            return f"{QV_TAG} {_colored(sub_name)} is no longer a sub: !queueverify can move them again."
+        self._subs[rep_sid] = (rep_name, None, None)
+        self.logger.info("fragq: qverify: %s (%s) no longer subs for %s (%s).",
+                         _clean(sub_name), sid, _clean(rep_name), rep_sid)
+        for p in self.players():
+            if str(p.steam_id) == sid:
+                p.tell(f"{QV_TAG} you're no longer subbing in this PUG.")
+            elif str(p.steam_id) == rep_sid:
+                p.tell(f"{QV_TAG} you're back in this PUG: you won't be moved off your team.")
+        return (f"{QV_TAG} {_colored(sub_name)} no longer subs for {_colored(rep_name)}: {_colored(rep_name)} is "
+                f"protected again, and !queueverify can move {_colored(sub_name)}.")
+
+    # ---- worker thread: HTTP only
+
+    @ql.thread
+    def _qverify_job(self, reply_to, cfg, players, mode, extra):
+        try:
+            if mode == "status":
+                self._qv_status(reply_to, cfg)
+            elif mode == "sub":
+                request = extra[0]
+                self._finish_sub(reply_to, request, self._qv_lookup(cfg, players, [s for s in (request[0], request[3]) if s]))
+            else:
+                found = self._qv_lookup(cfg, players, extra)
+                if isinstance(found, str):
+                    self._reply(reply_to, f"{QV_TAG} {found} Nothing was changed.")
+                else:
+                    self._qv_apply(reply_to, *found, mode == "dry")
+        except Exception:  # noqa: BLE001 - whatever a reply contains, answer and free the slot
+            self.logger.exception("fragq: qverify: check failed")
+            self._reply(reply_to, f"{QV_TAG} ^1the check failed unexpectedly^7; see the server log.")
+        finally:
+            with self._lock:
+                self._qv_busy = False
+
+    def _qv_fragq_status(self, cfg):
+        """(queue names, {capability: bool}) from FragQ GET /status, or (None, error)."""
+        data, error, _ = self._request(cfg, "GET", "/status")
+        if error:
+            return None, error
+        c = data.get("connector") if isinstance(data.get("connector"), dict) else {}
+        return [str(q) for q in c.get("queues") or []], (c.get("can") if isinstance(c.get("can"), dict) else {})
+
+    def _qv_status(self, reply_to, cfg):
+        queues, can = self._qv_fragq_status(cfg)
+        if queues is None:
+            self._reply(reply_to, f"{QV_TAG} ^1couldn't reach FragQ^7: {can}.")
+            return
+        allowed = ", ".join(k for k, v in sorted(can.items()) if v) or "none"
+        wanted = cfg.get("queue")
+        if wanted:
+            match = next((q for q in queues if q.casefold() == wanted.casefold()), None)
+            qline = (f"qlx_fragqQueue '{wanted}' is queue '{match}'." if match else
+                     f"^1qlx_fragqQueue '{wanted}' isn't one of this key's queues.^7")
+        else:
+            qline = "qlx_fragqQueue is empty: every queue of the key is checked."
+        self._reply(reply_to, f"{QV_TAG} key queues: {', '.join(queues) or 'none'}. Permissions: {allowed}.",
+                    f"{QV_TAG} {qline}" + ("" if can.get("check") else
+                                           " ^1!queueverify needs the key's 'Check linked players' permission.^7"))
+
+    def _qv_failure(self, cfg, error, status):
+        """One sentence that says which failure this is: unreachable, bad key, missing permission, bad queue."""
+        queue = cfg.get("queue")
+        if status == 0:
+            return f"^1couldn't reach FragQ^7: {error}"
+        if status == 401:
+            return f"^1FragQ refused the key^7 ({error}); check qlx_fragqKey"
+        if status == 404:
+            return "this FragQ has no POST /match yet; update FragQ"
+        if status == 403:
+            queues, can = self._qv_fragq_status(cfg)
+            if queues is not None and not can.get("check"):
+                return "^1the FragQ key can't read live matches^7: give it the 'Check linked players' permission"
+            return f"^1FragQ refused the request^7 ({error})"
+        if status == 400 and queue:
+            queues, _ = self._qv_fragq_status(cfg)
+            if queues is not None and not any(q.casefold() == queue.casefold() for q in queues):
+                return f"FragQ has no queue named {queue}; this key's queues: {', '.join(queues) or 'none'}"
+        return f"FragQ answered {error}"
+
+    def _qv_lookup(self, cfg, players, extra_ids=()):
+        """The FragQ match this server is playing and everyone's Discord ID (worker thread): (roster {discord_id:
+        team}, discord_of {steam_id: discord_id}, info), or a sentence saying why not."""
+        data, error, status = self._request(cfg, "POST", "/match", _with_queue({}, cfg))
+        if error:
+            self.logger.warning("fragq: qverify: FragQ match lookup failed: %s", error)
+            return f"{self._qv_failure(cfg, error, status)}."
+        where = f" for queue {cfg['queue']}" if cfg.get("queue") else ""
+        matches = [m for m in data.get("matches") or [] if isinstance(m, dict)]
+        playing = [m for m in matches if m.get("state") in QV_PLAYING]
+        if not playing:   # a valid answer, not a failure
+            pre = [m for m in matches if m.get("state") in QV_PRE_GAME]
+            if pre:
+                return (f"^3FragQ match #{pre[0].get('match_id')}{where} is still in "
+                        f"{str(pre[0].get('state')).replace('_', '-')}^7, so there's nothing to check yet.")
+            return f"^3no active FragQ match{where}^7."
+
+        discord_of, fragdex_error = self._fragdex_discord_ids(cfg, [sid for _, sid, _, _ in players] + list(extra_ids))
+        # FragQ's own Steam links fill the gaps Fragdex leaves (or everything, if Fragdex is down).
+        for m in playing:
+            for p in m.get("players") or []:
+                if isinstance(p, dict) and _is_steam_id(p.get("steam_id")) and str(p.get("discord_id", "")).isdigit():
+                    discord_of.setdefault(str(p["steam_id"]), str(p["discord_id"]))
+        if fragdex_error and not discord_of:
+            return (f"^1Fragdex couldn't be asked for Discord IDs^7 ({fragdex_error}) and FragQ has no Steam links "
+                    "for these players.")
+
+        # Like FragQ's own result matching: at least half of the match's players here, then the newest.
+        here_ids = {discord_of[sid] for _, sid, _, _ in players if sid in discord_of}
+
+        def overlap(m):
+            ids = [str(p.get("discord_id")) for p in m.get("players") or [] if isinstance(p, dict)]
+            return sum(i in here_ids for i in ids), len(ids)
+
+        candidates = [m for m in playing if overlap(m)[0] >= max(1, -(-overlap(m)[1] // 2))]
+        if not candidates:
+            here, total = overlap(playing[0])
+            return (f"^3the newest FragQ match{where} (#{playing[0].get('match_id')}) has only {here} of its {total} "
+                    "players on this server^7, so it isn't this game.")
+        match = max(candidates, key=lambda m: _int(m.get("started_at"), 0))
+        roster, names = {}, {}
+        for p in match.get("players") or []:
+            if isinstance(p, dict) and str(p.get("discord_id", "")).isdigit():
+                did = str(p["discord_id"])
+                roster[did] = p.get("team") if p.get("team") in (0, 1) else None
+                names[did] = str(p.get("discord_name") or did)   # a Discord name: no QL colour codes in it
+        if not roster:
+            return f"FragQ match #{match.get('match_id')} has no players."
+        info = dict(match_id=match.get("match_id"), queue=str(match.get("queue") or ""), names=names,
+                    team_names=match.get("team_names") or ["team 1", "team 2"], fragdex_error=fragdex_error)
+        return roster, discord_of, info
+
+    def _fragdex_discord_ids(self, cfg, steam_ids):
+        """{steam_id: discord_id} of the linked players, from Fragdex POST /players/lookup in batches of 100, and an
+        error (None when every batch was answered). Unlinked players are simply absent."""
+        if not cfg.get("fragdex_url") or not cfg.get("fragdex_key"):
+            return {}, "qlx_fragdexUrl / qlx_fragdexKey not set"
+        out, error = {}, None
+        ids = list(dict.fromkeys(steam_ids))
+        for i in range(0, len(ids), FRAGDEX_BATCH):
+            data, err, _ = self._fragdex(cfg, "POST", "/players/lookup", {"steam_ids": ids[i:i + FRAGDEX_BATCH]})
+            if err:
+                self.logger.warning("fragq: qverify: Fragdex lookup failed: %s", err)
+                error = err
                 continue
-            if p is None or str(p.steam_id) != steam_id:
-                continue   # the slot now belongs to someone else
-            for line in lines:
-                p.tell(_text(line))
+            for p in data.get("players") or []:
+                if isinstance(p, dict) and p.get("known") and str(p.get("discord_id") or "").isdigit():
+                    out[str(p.get("steam_id"))] = str(p["discord_id"])
+        return out, error
+
+    # ---- back on the game thread: the moves
+
+    @ql.next_frame
+    def _qv_apply(self, reply_to, roster, discord_of, info, dry):
+        # Read the teams again: players may have joined, left or switched while FragQ and Fragdex answered.
+        lines = [f"{QV_TAG} FragQ match #{info['match_id']} ({_text(info['queue'])}), {len(roster)} players."]
+        if self._subs_match != info["match_id"]:   # subs belong to one PUG
+            if self._subs and self._subs_match is not None:
+                lines.append(f"{QV_TAG} new FragQ match: subs cleared "
+                             f"({', '.join(self._sub_label(x) for x in self._subs)}).")
+                self._subs.clear()
+            self._subs_match = info["match_id"]
+        result = qverify_plan(roster, self._qv_snapshot(), discord_of, lookup_ok=not info["fragdex_error"],
+                              protected={sid: rep for sid, (_, rep, _) in self._subs.items()})
+        names = info["names"]
+        if info["fragdex_error"]:
+            lines.append(f"{QV_TAG} ^3Fragdex: {info['fragdex_error']}^7; using FragQ's Steam links only, and players "
+                         "without one are left alone.")
+
+        def who(entries):
+            return ", ".join(_colored(e[2]) for e in entries)
+
+        switch, evict, place, wait = result["switch"], result["evict"], result["place"], result["wait"]
+        if not switch and not evict and not place and not wait:
+            lines.append(f"{QV_TAG} ^2the roster is clean: the teams match the PUG.")
+        if result["subs"]:
+            lines.append(f"{QV_TAG} subs kept on their team: {who(result['subs'])}")
+        named = [self._sub_label(sid) for sid in self._subs if self._subs[sid][1]]
+        if named:
+            lines.append(f"{QV_TAG} subbing in: " + ", ".join(named))
+        if result["covered"]:
+            lines.append(f"{QV_TAG} not brought in, a sub has their slot: {who(result['covered'])}")
+        if result["unverified"]:
+            lines.append(f"{QV_TAG} ^3not checked (Fragdex down, no FragQ link), left alone:^7 {who(result['unverified'])}")
+        if result["missing"]:
+            lines.append(f"{QV_TAG} PUG players not on the server: " + ", ".join(names[d] for d in result["missing"]))
+        if dry:
+            if switch:
+                lines.append(f"{QV_TAG} would switch: " +
+                             ", ".join(f"{_colored(i[2])} in for {_colored(o[2])} ({o[3]})" for o, i in switch))
+            if evict:
+                lines.append(f"{QV_TAG} would move to spectator: {who(evict)}")
+            if place:
+                lines.append(f"{QV_TAG} would put on their team: " +
+                             ", ".join(f"{_colored(e[2])} -> {s}" for e, s in place))
+            if wait:
+                lines.append(f"{QV_TAG} would ask to join ({wait[0][1]}): {who(e for e, _ in wait)}")
+            self._reply_lines(reply_to, lines)
+            return
+
+        moves, failed, switched = [], [], []
+        out_line = f"{QV_TAG} you're not in the current FragQ PUG, so you were moved to spectator."
+        for out_entry, in_entry in switch:
+            team = out_entry[3]
+            error = self._qv_switch(out_entry, in_entry)
+            if error is None:
+                moves += [(out_entry, "spectator"), (in_entry, team)]
+                switched.append(f"{_colored(in_entry[2])} in for {_colored(out_entry[2])} ({team})")
+                self._qv_tell(out_entry, out_line)
+                self._qv_tell(in_entry, f"{QV_TAG} you're in the FragQ PUG: you were put on {team.capitalize()}.", True)
+            else:
+                failed.append(f"{_colored(in_entry[2])} <-> {_colored(out_entry[2])} ({error})")
+        # Evict the rest before putting anyone in, so a team never holds more than its players.
+        for entry in evict:
+            error = self._qv_put(entry, "spectator")
+            if error is None:
+                moves.append((entry, "spectator"))
+                self._qv_tell(entry, out_line)
+            elif error != "left":
+                failed.append(f"{_colored(entry[2])} ({error})")
+        for entry, side in place:
+            error = self._qv_put(entry, side)
+            if error is None:
+                moves.append((entry, side))
+                self._qv_tell(entry, f"{QV_TAG} you're in the FragQ PUG: you were put on {side.capitalize()}.", True)
+            elif error != "left":
+                failed.append(f"{_colored(entry[2])} ({error})")
+        snapshot = self._qv_snapshot() if wait else []
+        for entry, _ in wait:
+            fq = result["member_fq"].get(entry[1])
+            if fq in (0, 1):
+                team_name = str(info["team_names"][fq])
+                mates = [_colored(n) for _, s, n, t in snapshot
+                         if t in ("red", "blue") and result["member_fq"].get(s) == fq]
+                hint = f"join your team {team_name}" + (f" (with {', '.join(mates)})" if mates else "")
+            else:
+                hint = "join a team"
+            self._qv_tell(entry, f"{QV_TAG} you're in the FragQ PUG: {hint} now: /team r or /team b.", True)
+
+        out_n = sum(1 for _, t in moves if t == "spectator")
+        put_in = [f"{_colored(e[2])} -> {t}" for e, t in moves[2 * len(switched):] if t != "spectator"]
+        lines.append(f"{QV_TAG} moved {out_n} non-PUG player(s) to spectator." +
+                     (f" Switched in {len(switched)} PUG member(s): {', '.join(switched)}." if switched else "") +
+                     (f" Put {len(put_in)} PUG member(s) on their team: {', '.join(put_in)}." if put_in else ""))
+        if wait:
+            lines.append(f"{QV_TAG} {len(wait)} PUG member(s) told to join: {who(e for e, _ in wait)} "
+                         f"({'; '.join(dict.fromkeys(r for _, r in wait))}).")
+        if failed:
+            lines.append(f"{QV_TAG} ^1couldn't move:^7 " + ", ".join(failed))
+        self.logger.info("fragq: qverify: match %s: %d switched, %d to spectator, %d put on a team, %d prompted, "
+                         "%d failed.", info["match_id"], len(switched), out_n, len(put_in), len(wait), len(failed))
+        if moves:
+            self._qv_confirm(reply_to, moves, lines)   # report once we've seen the moves stick
+        else:
+            self._reply_lines(reply_to, lines)
+
+    @ql.delay(QV_CONFIRM_DELAY)
+    def _qv_confirm(self, reply_to, moves, lines):
+        """A put can be undone by another plugin (a queue or balance plugin reacting to it): check (game thread)."""
+        undone = []
+        for entry, team in moves:
+            p = self._slot_player(entry[0], entry[1])
+            if p is not None and _team(p.team) != team:
+                undone.append(f"{_colored(entry[2])} (now {_team(p.team)}, wanted {team})")
+        if undone:
+            self.logger.warning("fragq: qverify: moves undone after %.1fs: %s", QV_CONFIRM_DELAY, _clean(", ".join(undone)))
+            lines = lines + [f"{QV_TAG} ^1moved back by the server or another plugin:^7 " + ", ".join(undone)]
+        self._reply_lines(reply_to, lines)
+
+    def _qv_switch(self, out_entry, in_entry):
+        """Swap a non-PUG player on a team with a PUG spectator by client id (game thread): Player.switch puts each
+        in the other's place. None when done, else the error. If one of them left, the other half is a put."""
+        p_out, p_in = self._slot_player(*out_entry[:2]), self._slot_player(*in_entry[:2])
+        if p_in is None:
+            error = self._qv_put(out_entry, "spectator")
+            return None if error in (None, "left") else error
+        if p_out is None:
+            return self._qv_put(in_entry, out_entry[3])
+        try:
+            p_out.switch(p_in)
+            return None
+        except Exception as e:  # noqa: BLE001 - the game rejected it: fall back to the two puts it stands for
+            self.logger.warning("fragq: qverify: switch %s <-> %s failed (%s); trying put.",
+                                _clean(out_entry[2]), _clean(in_entry[2]), e)
+        return self._qv_put(out_entry, "spectator") or self._qv_put(in_entry, out_entry[3])
+
+    def _qv_put(self, entry, team):
+        """Move the player in this slot (game thread). None when done, 'left' when the slot changed hands, else the
+        error. Like _enforce: the team name first, then minqlxtended's Team member."""
+        p = self._slot_player(entry[0], entry[1])
+        if p is None:
+            return "left"
+        try:
+            p.put(team)
+            return None
+        except Exception:  # noqa: BLE001 - minqlxtended may want its Team member
+            pass
+        try:
+            p.put(getattr(ql, "Team")[team.upper()])
+            return None
+        except Exception as e:  # noqa: BLE001 - team full, game state: report, don't stop the others
+            self.logger.warning("fragq: qverify: couldn't put %s on %s: %s", _clean(entry[2]), team, e)
+            return str(e)[:80] or type(e).__name__
+
+    def _qv_tell(self, entry, line, center=False):
+        p = self._slot_player(entry[0], entry[1])
+        if p is None:
+            return
+        p.tell(_text(line))
+        if center:
+            p.center_print(_text(line.replace(QV_TAG, "").strip()))   # colours kept
+
+    # ------------------------------------------------------------ !whois
+
+    def cmd_whois(self, player, msg, channel):
+        cfg = self._cfg
+        level = cfg.get("whois_level", 0)
+        if level and not self.db.has_permission(player, level):
+            player.tell(f"^1FragQ:^7 !whois needs permission level {level}.")
+            return STOP_ALL
+        if len(msg) < 2:
+            player.tell("^1FragQ:^7 usage: ^5!whois <who>^7, where <who> is a player id (from /players), a Steam ID, "
+                        "a Discord user id or username, or part of an in-game name.")
+            return STOP_ALL
+        if not cfg.get("fragdex_url") or not cfg.get("fragdex_key"):
+            self.logger.warning("fragq: !whois unavailable: qlx_fragdexUrl / qlx_fragdexKey not set")
+            player.tell("^1FragQ:^7 !whois needs Fragdex, which isn't set up on this server "
+                        "(qlx_fragdexUrl / qlx_fragdexKey).")
+            return STOP_ALL
+        sid_self = str(player.steam_id)
+        now = time.time()
+        if getattr(channel, "name", "") != "console" and now - self._whois_at.get(sid_self, 0) < WHOIS_COOLDOWN:
+            player.tell(f"^1FragQ:^7 wait {int(WHOIS_COOLDOWN - (now - self._whois_at[sid_self])) + 1}s.")
+            return STOP_ALL
+        query = " ".join(msg[1:]).strip()
+        shown = _text(query[:40])
+
+        # Work out what was typed, on the game thread where the player list can be read.
+        target = None   # (steam_id, in-game name or None) or ("discord", text)
+        if query.isdigit() and len(query) <= 2:
+            found = self._client(query)
+            if found is None:
+                player.tell(f"^1FragQ:^7 no player with id {shown}. Player ids are shown by /players.")
+                return STOP_ALL
+            target = (str(found.steam_id), str(found.name or ""))
+        elif _steam64(query):
+            sid = _steam64(query)
+            here = next((p for p in self.players() if str(p.steam_id) == sid), None)
+            target = (sid, str(here.name or "") if here else None)
+        elif query.isdigit():
+            target = ("discord", query)   # a Discord user id
+        else:
+            low = _clean(query).casefold()
+            on_server = [p for p in self.players() if _is_steam_id(p.steam_id)]
+            exact = [p for p in on_server if _clean(p.name).casefold() == low]
+            partial = exact or [p for p in on_server if low and low in _clean(p.name).casefold()]
+            if len(partial) == 1:
+                target = (str(partial[0].steam_id), str(partial[0].name or ""))
+            elif len(partial) > 1:
+                player.tell(f"^1FragQ:^7 {len(partial)} players match '{shown}': " +
+                            ", ".join(f"{_colored(p.name)} ({p.id})" for p in partial[:6]) +
+                            ". Use the player id: ^5!whois <id>^7.")
+                return STOP_ALL
+            else:
+                target = ("discord", query.lstrip("@"))   # nobody here by that name: try it as a Discord username
+        self._whois_at[sid_self] = now
+        self._whois(self._reply_target(player, channel), dict(cfg), target, query)
+        return STOP_ALL
+
+    @ql.thread
+    def _whois(self, reply_to, cfg, target, query):
+        try:
+            lines = self._whois_lines(cfg, target, query)
+        except Exception:  # noqa: BLE001 - never let a bad answer pass silently
+            self.logger.exception("fragq: !whois %s failed", _clean(query))
+            lines = ["^1FragQ:^7 ^1the lookup failed unexpectedly^7; see the server log."]
+        self._reply(reply_to, *lines)
+
+    def _whois_lines(self, cfg, target, query):
+        """The reply to !whois (worker thread). Fragdex POST /players/lookup for a Steam ID (Discord link, Steam
+        persona and last in-game name in one request), GET /discord/{id or username} for a Discord account."""
+        shown = _text(query[:40])
+        if target[0] == "discord":
+            data, error, status = self._fragdex(cfg, "GET", "/discord/" + urllib.parse.quote(target[1], safe=""))
+            if status == 400:   # Fragdex: not a Discord user id or username
+                return [f"^1FragQ:^7 ^3nobody matches '{shown}'^7: no player on the server has that name, and it "
+                        "isn't a Discord user id or username."]
+            if error:
+                return [self._fragdex_failure(error, status)]
+            rows = [p for p in data.get("players") or [] if isinstance(p, dict) and _is_steam_id(p.get("steam_id"))]
+            if not rows:
+                return [f"^1FragQ:^7 ^3no Steam account is linked to Discord '{shown}'^7, and no player on the server "
+                        "has that name."]
+            accounts = {str(p.get("discord_id")) for p in rows if p.get("discord_id")}
+            if len(accounts) > 1:
+                return [f"^1FragQ:^7 ^3'{shown}' matches {len(accounts)} Discord accounts^7; use the Discord user id."]
+            lines = [self._whois_line(p, None) for p in rows[:3]]
+            if len(rows) > 1:
+                lines.insert(0, f"^1FragQ:^7 Discord '{shown}' is linked to {len(rows)} Steam accounts:")
+                if len(rows) > 3:
+                    lines.append(f"^1FragQ:^7 ...and {len(rows) - 3} more.")
+            return lines
+
+        sid, ingame = target
+        data, error, status = self._fragdex(cfg, "POST", "/players/lookup", {"steam_ids": [sid]})
+        if error:
+            # Fragdex is down: FragQ's own linked check still says whether there is a Discord link.
+            fq, fq_error, _ = self._request(cfg, "POST", "/players/linked", {"steam_ids": [sid]})
+            row = next((p for p in (fq or {}).get("players") or [] if isinstance(p, dict)), None)
+            lines = [self._fragdex_failure(error, status)]
+            if not fq_error and row is not None:
+                name = f"{_colored(ingame)} " if ingame else ""
+                lines.append(f"^1FragQ:^7 from FragQ instead: {name}Steam ^5{sid}^7 " +
+                             (f"is ^2linked^7 to Discord ^5{_text(row.get('discord_name') or 'a member')}^7."
+                              if row.get("linked") else "^3has no Discord link^7."))
+            return lines
+        row = next((p for p in data.get("players") or [] if isinstance(p, dict) and str(p.get("steam_id")) == sid), None)
+        if row is None or not row.get("known"):
+            who = f"{_colored(ingame)} (Steam ^5{sid}^7)" if ingame else f"Steam ^5{sid}^7"
+            return [f"^1FragQ:^7 ^3Fragdex has no record of^7 {who}, so no Discord link."]
+        return [self._whois_line(row, ingame)]
+
+    @staticmethod
+    def _whois_line(row, ingame):
+        """One Fragdex player summary -> a chat line: in-game name, Steam ID and persona, Discord link."""
+        sid = str(row.get("steam_id"))
+        last = str(row.get("name_raw") or row.get("name") or "")   # Fragdex keeps the raw name: colours intact
+        steam = row.get("steam") if isinstance(row.get("steam"), dict) else {}
+        persona = _clean(steam.get("persona") or "").strip()   # a Steam name: QL colour codes there are noise
+        head = _colored(ingame) if ingame else (_colored(last) if last else "?")
+        parts = [f"^1FragQ:^7 {head} - Steam ^5{sid}^7"]
+        if persona:
+            parts.append(f" ({_text(persona)})")
+        did, dname = row.get("discord_id"), row.get("discord_name")
+        if did or dname:
+            parts.append(f" <-> Discord ^5{_text(dname or did)}^7" + (f" ({did})" if did and dname else "") + ".")
+        else:
+            parts.append(" ^3has no Discord link^7.")
+        if ingame and last and _clean(last) != _clean(ingame):
+            parts.append(f" Last seen as {_colored(last)}.")
+        return "".join(parts)
+
+    @staticmethod
+    def _fragdex_failure(error, status):
+        if status == 0:
+            return f"^1FragQ:^7 ^1couldn't reach Fragdex^7 ({error}); try again later."
+        if status in (401, 403):
+            return f"^1FragQ:^7 ^1Fragdex refused the key^7 ({error}); check qlx_fragdexKey."
+        if status == 429:
+            return f"^1FragQ:^7 ^3Fragdex is rate limiting this server^7 ({error})."
+        return f"^1FragQ:^7 ^1Fragdex answered^7 {error}."

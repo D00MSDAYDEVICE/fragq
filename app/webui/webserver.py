@@ -1009,6 +1009,10 @@ async def connect_voice(c, body):
 	return await bot.voice.from_game(c, body)
 
 
+async def connect_match(c, body):
+	return await bot.connectors.active_matches(c, body)
+
+
 async def download_plugin(request):
 	path = os.path.join(PLUGINS, "minqlx", "fragq.py")
 	if request.match_info["name"] != "fragq.py" or not os.path.isfile(path):
@@ -1496,6 +1500,7 @@ def make_app():
 	r.add_post(CONNECT + "/link", connect_api(connect_link, "can_link"))
 	r.add_get(CONNECT + "/steam/links", connect_api(connect_steam_links, "can_export"))
 	r.add_post(CONNECT + "/voice", connect_api(connect_voice, "can_voice"))
+	r.add_post(CONNECT + "/match", connect_api(connect_match, "can_check"))
 	r.add_get("/downloads/minqlx/{name}", download_plugin)
 
 	r.add_static("/static", STATIC, append_version=False)
