@@ -274,7 +274,7 @@
     var p = path.split("/").filter(Boolean).map(decodeURIComponent);
     var r = {};
     if (p[0] === "status" || p[0] === "settings") r.page = p[0];
-    if (p[0] === "users" || p[0] === "connectors") { r.page = p[0]; r.ugid = p[1]; }
+    if (p[0] === "users" || p[0] === "connectors" || p[0] === "queuegen") { r.page = p[0]; r.ugid = p[1]; }
     if (p[0] === "g" && p[1]) {
       r.gid = p[1];
       if (p[2] === "c" && p[3]) {
@@ -391,6 +391,8 @@
       me.bot.invite ? h("a", { href: me.bot.invite, target: "_blank", rel: "noopener noreferrer" }, icon("plus"), h("span", { text: "Invite bot" })) : null,
       me.user.owner ? (dom.statusLink = h("a", { href: "/status", onclick: function (e) { e.preventDefault(); go({ page: "status" }); } },
         icon("terminal"), h("span", { text: "Bot status" }))) : null,
+      me.user.owner || me.user.manage_events ? (dom.queuegenLink = h("a", { href: "/queuegen", onclick: function (e) { e.preventDefault(); go({ page: "queuegen" }); } },
+        icon("calendar"), h("span", { text: "QueueGen" }))) : null,
       me.user.owner || me.user.manage_users ? (dom.usersLink = h("a", { href: "/users", onclick: function (e) { e.preventDefault(); go({ page: "users" }); } },
         icon("users"), h("span", { text: "Users" }))) : null,
       me.user.owner || me.user.manage_connectors ? (dom.connectorsLink = h("a", { href: "/connectors", onclick: function (e) { e.preventDefault(); go({ page: "connectors" }); } },
@@ -478,12 +480,13 @@
     if (dom.settingsLink) dom.settingsLink.classList.toggle("active", r.page === "settings");
     if (dom.usersLink) dom.usersLink.classList.toggle("active", r.page === "users");
     if (dom.connectorsLink) dom.connectorsLink.classList.toggle("active", r.page === "connectors");
+    if (dom.queuegenLink) dom.queuegenLink.classList.toggle("active", r.page === "queuegen");
     renderRail();
     toggleTree(false);
     if (!r.gid) {
       S.guild = null;
       renderTree();
-      return r.page === "status" ? renderStatus() : r.page === "settings" ? renderSettings() : r.page === "users" ? renderUsers() : r.page === "connectors" ? renderConnectors() : renderWelcome();
+      return r.page === "status" ? renderStatus() : r.page === "settings" ? renderSettings() : r.page === "users" ? renderUsers() : r.page === "connectors" ? renderConnectors() : r.page === "queuegen" ? renderQueueGen() : renderWelcome();
     }
     var p = (guildChanged || !S.guild || S.guild.id !== r.gid) ? loadGuild(r.gid) : Promise.resolve(S.guild);
     if (guildChanged) mainLoading();
@@ -1340,6 +1343,10 @@
       { id: "steam_links", label: "Steam links", desc: function (d) { var n = (d.steam_links || []).length; return n + " linked player" + (n === 1 ? "" : "s") + "."; } },
       { id: "web_access", label: "Web panel access", desc: function (d) { var n = (d.web_access || []).length; return n + " grant" + (n === 1 ? "" : "s") + " from the Users page."; } },
       { id: "connectors", optional: true, label: "Game connectors", desc: function (d) { var n = (d.connectors || []).length; return n + " connector" + (n === 1 ? "" : "s") + " with their keys: game servers keep working without new keys."; } },
+      { id: "queuegen", optional: true, label: "QueueGen", desc: function (d) {
+        var g = d.queuegen || [], t = g.reduce(function (n, x) { return n + (x.tournaments || []).length; }, 0);
+        return "QueueGen settings of " + g.length + " server" + (g.length === 1 ? "" : "s") + " and " + t + " tournament" + (t === 1 ? "" : "s") + ". Events aren't in backups.";
+      } },
     ];
     var checks = {};
 
@@ -1408,6 +1415,7 @@
       }
       if (rep.steam_links) lines.push(["Steam links", rep.steam_links.added + (dry ? " to restore" : " restored") + ", " + rep.steam_links.skipped + " skipped"]);
       if (rep.connectors) lines.push(["Game connectors", rep.connectors.added + (dry ? " to add" : " added") + ", " + rep.connectors.replaced + (dry ? " to replace" : " replaced") + ", " + rep.connectors.missing + " skipped"]);
+      if (rep.queuegen) lines.push(["QueueGen", rep.queuegen.servers + " server" + (rep.queuegen.servers === 1 ? "" : "s") + ", tournaments: " + rep.queuegen.tournaments_added + (dry ? " to add" : " added") + ", " + rep.queuegen.tournaments_updated + (dry ? " to update" : " updated")]);
       if (rep.web_access) lines.push(["Web panel access", rep.web_access.added + (dry ? " to add" : " added") + ", " + rep.web_access.replaced + (dry ? " to replace" : " replaced") + ", " + rep.web_access.missing + " skipped"]);
       var notes = [];
       Object.keys(rep).forEach(function (k) { notes = notes.concat(rep[k].notes || []); });
@@ -1665,6 +1673,410 @@
     draw();
   }
 
+  // ------------------------------------------------------------------ QueueGen page (scheduled events, see bot/queuegen.py)
+  var EV_STATE = { scheduled: ["", "Scheduled"], open: ["ok", "Check-in open"], live: ["warn", "Match on"], finished: ["ok", "Finished"],
+    cancelled: ["danger", "Cancelled"], archived: ["", "Archived"] };
+  var CLEANUP = { 24: "24 hours after it ends", 72: "3 days after it ends", 168: "7 days after it ends", 0: "Keep them" };
+  var LOBBY = { event: "Generate a Lobby for each event", global_generate: "One Lobby for every event (FragQ creates it)",
+    global_choose: "One Lobby for every event (choose a channel)" };
+
+  function renderQueueGen() {
+    S.editor = null;
+    var root = main();
+    root.classList.add("wide");
+    var gs = S.guilds.filter(function (g) { return g.manage_events; });
+    append(root, h("div", { class: "page-head" }, h("div", {},
+      h("h1", { text: "QueueGen" }),
+      h("p", { text: "Schedule a match between two teams. FragQ creates its own channel, voice channels and queue; only the roster can check in, and the match starts once everyone has." }))));
+    if (!gs.length) {
+      append(root, h("div", { class: "panel" }, h("div", { class: "empty-state" }, icon("calendar"), h("h3", { text: "Nothing to manage" }),
+        h("p", { text: "You don't have the Manage events permission on any server." }))));
+      return;
+    }
+    var gid = gs.some(function (g) { return g.id === S.route.ugid; }) ? S.route.ugid : gs[0].id;
+    if (gs.length > 1) {
+      var seg = h("div", { class: "seg wrap" });
+      gs.forEach(function (g) {
+        seg.appendChild(h("button", { type: "button", class: g.id === gid ? "on" : "", onclick: function () { go({ page: "queuegen", ugid: g.id }, true); } }, g.name));
+      });
+      root.appendChild(h("div", { class: "form-row", style: "margin:0 0 16px" }, seg));
+    }
+    var body = h("div", {}, h("div", { class: "empty-state" }, h("span", { class: "spinner" })));
+    root.appendChild(body);
+    function load() {
+      return api("GET", "/api/guilds/" + gid + "/queuegen").then(function (d) {
+        if (S.route.page !== "queuegen") return;
+        drawQueueGen(clear(body), gid, d, load);
+      }).catch(function (e) { clear(body); append(body, h("div", { class: "flash flash-error", text: e.message })); });
+    }
+    load();
+    setTimer(function () { if (!document.querySelector(".modal-back")) load(); }, 15000);
+  }
+
+  function evPerson(d, ev, id) {
+    return (ev && ev.people[id]) || d.linked.find(function (p) { return p.id === id; }) || { id: id, name: id };
+  }
+
+  function drawQueueGen(body, gid, d, reload) {
+    var base = "/api/guilds/" + gid;
+    var active = d.events.filter(function (e) { return ["scheduled", "open", "live"].indexOf(e.state) >= 0; });
+    var past = d.events.filter(function (e) { return active.indexOf(e) < 0; }).reverse();
+    function list(items, empty) {
+      var el = h("div", { class: "conn-list" });
+      items.forEach(function (ev) { el.appendChild(eventCard(d, base, ev, reload)); });
+      if (!items.length) el.appendChild(h("div", { class: "vt-empty", text: empty }));
+      return el;
+    }
+    append(body, [
+      d.missing_permissions.length ? h("div", { class: "flash flash-error" }, icon("alert"),
+        h("span", { text: "The bot is missing Discord permissions QueueGen needs: " + d.missing_permissions.join(", ") + ". Give them to its role in Server Settings › Roles." })) : null,
+      h("section", { class: "panel" },
+        h("div", { class: "panel-head" }, h("h2", { text: "Events" }),
+          h("span", { class: "muted", style: "margin-left:auto;margin-right:12px;font-size:12.5px", text: active.length + " upcoming or running" }),
+          h("button", { class: "btn btn-primary", type: "button", disabled: !d.linked.length, title: d.linked.length ? "" : "No member of this server has linked a Steam account yet",
+            onclick: function () { eventModal(d, base, null, reload); } }, icon("plus"), "Create event")),
+        list(active, "No upcoming events. Create one: FragQ makes its channel and voice channels right away, and check-in opens when you press Open check-in.")),
+      h("section", { class: "panel" },
+        h("div", { class: "panel-head" }, h("h2", { text: "Tournaments" }),
+          h("span", { class: "muted", style: "margin-left:auto;margin-right:12px;font-size:12.5px", text: "Events in a tournament share one rating history" }),
+          h("button", { class: "btn", type: "button", onclick: function () { tournamentModal(d, base, null, reload); } }, icon("plus"), "Create tournament")),
+        (function () {
+          var el = h("div", { class: "conn-list" });
+          d.tournaments.forEach(function (t) { el.appendChild(tournamentCard(d, base, t, reload)); });
+          if (!d.tournaments.length) el.appendChild(h("div", { class: "vt-empty", text: "No tournaments. Without one, each event keeps its own ratings. Create one to rate a series of events together, then pick it on each event." }));
+          return el;
+        })()),
+      past.length ? h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h2", { text: "Past events" })), list(past, "")) : null,
+      queueGenSettings(d, base, reload),
+    ]);
+  }
+
+  function eventCard(d, base, ev, reload) {
+    var st = EV_STATE[ev.state] || ["", ev.state];
+    var url = base + "/events/" + ev.id;
+    var on = ["scheduled", "open", "live"].indexOf(ev.state) >= 0;
+    function act(path, done) {
+      return api("POST", url + path).then(function (r) { done(r); reload(); }).catch(function (e) { toast(e.message, "error"); });
+    }
+    var conn = d.connectors.find(function (c) { return c.id === ev.connector_id; });
+    var meta = [
+      ["When", fmtDate(ev.start_at)],
+      ["Format", ev.team_size + "v" + ev.team_size + (ev.series_length > 1 ? " · best of " + ev.series_length : " · single match")],
+      ["Server", ev.server || "Not set"],
+      ["Channel", ev.channel ? "#" + ev.channel.name : ev.state === "archived" ? "Deleted" : "—"],
+      ["Voice", ev.voice.length ? ev.voice.map(function (v) { return v.name; }).join(", ") : "—"],
+      ["Options", [ev.rated ? "Rated" : "Unrated", ev.slipgate_results ? "Slipgate results" : null, ev.private ? "Private" : "Public"].filter(Boolean).join(" · ")],
+      ["Results from", conn ? conn.name : "No connector"],
+      ["Ratings", !ev.rated ? "Unrated" : ev.tournament ? "Tournament: " + ev.tournament : "Its own"],
+      ["Check-in", ev.state === "scheduled" ? (ev.auto_open ? "Opens at the start time" : "Opened by an admin") : ev.state === "open" ? "Open" : "Closed"],
+    ];
+    var dEvent = !on && ev.discord_event_url ? h("span", { text: "Ended" })
+      : ev.discord_event_url ? h("a", { href: ev.discord_event_url, target: "_blank", rel: "noopener noreferrer", text: ev.discord_title })
+      : ev.discord_event_error ? h("span", { text: ev.discord_event_error })
+      : h("span", { text: ev.private ? "Off (private event)" : !ev.discord_event ? "Off" : on ? "Not created (start time passed)" : "—" });
+    if (ev.result) meta.push(["Result", "Match #" + ev.result.match_id + ": " + ev.result.text]);
+    else if (ev.match_id) meta.push(["Match", "#" + ev.match_id]);
+    if (ev.delete_at) meta.push(["Channels deleted", fmtDate(ev.delete_at)]);
+    else if (!on && ev.state !== "archived") meta.push(["Channels", "Kept"]);
+    var teams = h("div", { class: "ev-teams" }, [0, 1].map(function (i) {
+      return h("div", { class: "ev-team" }, h("h4", {}, ev.team_names[i], h("span", { class: "faint", text: " " + ev.roster[i].length + "/" + ev.team_size })),
+        ev.roster[i].length ? h("ul", {}, ev.roster[i].map(function (id) {
+          var p = evPerson(d, ev, id), ready = ev.checked_in.indexOf(id) >= 0;
+          return h("li", { class: ready ? "ready" : "" }, p.avatar ? h("img", { src: p.avatar, alt: "" }) : h("span", { class: "ev-av", text: initials(p.name) }),
+            h("span", { text: p.name }), ev.state === "open" ? h("span", { class: "badge " + (ready ? "ok" : ""), text: ready ? "Checked in" : "Waiting" }) : null);
+        })) : h("p", { class: "muted", text: "No players yet." }));
+    }));
+    return h("article", { class: "conn-card" + (on ? "" : " is-off") },
+      h("div", { class: "conn-head" },
+        h("div", { class: "conn-title" }, h("span", { class: "conn-game", text: "🏆" }), h("strong", { text: ev.name }),
+          h("span", { class: "badge " + st[0], text: st[1] }))),
+      ev.description ? h("p", { class: "muted ev-desc", text: ev.description }) : null,
+      ev.start_notice && ev.state === "scheduled" ? h("div", { class: "flash flash-error", style: "margin:10px 0 0" }, icon("alert"),
+        h("span", { text: "The start time has passed but a team is short of players: fill the roster (Edit), then press Open check-in." })) : null,
+      teams,
+      h("dl", { class: "conn-meta" }, meta.map(function (m) { return h("div", {}, h("dt", { text: m[0] }), h("dd", { text: m[1] })); }),
+        h("div", { class: ev.discord_event_error ? "denied" : "" }, h("dt", { text: "Discord event" }), h("dd", {}, dEvent))),
+      h("div", { class: "key-actions" },
+        on ? h("button", { class: "btn btn-sm", type: "button", onclick: function () { eventModal(d, base, ev, reload); } }, icon("edit"), "Edit") : null,
+        ev.state === "scheduled" ? h("button", { class: "btn btn-sm btn-outline-ok", type: "button", onclick: function (e) {
+          e.currentTarget.disabled = true;
+          act("/open", function () { toast("Check-in is open: the roster was pinged in #" + (ev.channel ? ev.channel.name : "the event channel") + "."); });
+        } }, icon("play"), "Open check-in") : null,
+        on ? h("button", { class: "btn btn-sm", type: "button", onclick: function () { swapModal(d, url, ev, reload); } }, icon("swap"), "Swap player") : null,
+        on ? h("button", { class: "btn btn-sm", type: "button", onclick: function () {
+          confirmModal({ title: "Cancel event", ok: "Cancel event", danger: true,
+            text: "Cancel '" + ev.name + "'?" + (ev.state === "live" ? " Its match is canceled too." : "") + " Its channels are deleted " + (CLEANUP[ev.cleanup_hours] || "later").toLowerCase() + "." })
+            .then(function (ok) { if (ok) act("/cancel", function () { toast("Event cancelled."); }); });
+        } }, icon("x"), "Cancel event") : null,
+        h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: function () {
+          confirmModal({ title: "Delete event", ok: "Delete", danger: true,
+            text: "Delete '" + ev.name + "'" + (ev.state === "archived" ? " from this list?" : " now? FragQ deletes its text and voice channels right away" + (ev.state === "live" ? " and cancels its match" : "") + ".") + " Its match results and ratings stay." })
+            .then(function (ok) {
+              if (ok) api("DELETE", url).then(function () { toast("Event deleted."); reload(); }).catch(function (e) { toast(e.message, "error"); });
+            });
+        } }, icon("trash"), "Delete")));
+  }
+
+  function tournamentCard(d, base, t, reload) {
+    var url = base + "/tournaments/" + t.id;
+    var upcoming = t.events.filter(function (e) { return ["scheduled", "open", "live"].indexOf(e.state) >= 0; });
+    var board = t.leaderboard.length ? h("div", { class: "scroll-x ev-board" }, h("table", { class: "dtable compact" },
+      h("thead", {}, h("tr", {}, h("th", { text: "#" }), h("th", { text: "Player" }), h("th", { class: "num", text: "Rating" }), h("th", { class: "num", text: "W–L–D" }))),
+      h("tbody", {}, t.leaderboard.map(function (r, i) {
+        return h("tr", {}, h("td", { class: "faint", text: String(i + 1) }), h("td", { text: r.name }), h("td", { class: "num mono", text: String(r.rating) }),
+          h("td", { class: "num mono", text: r.wins + "–" + r.losses + "–" + r.draws }));
+      })))) : h("p", { class: "muted", style: "margin:10px 0 0", text: "No rated matches yet." });
+    return h("article", { class: "conn-card" },
+      h("div", { class: "conn-head" }, h("div", { class: "conn-title" }, h("span", { class: "conn-game", text: "🏅" }), h("strong", { text: t.name }),
+        h("span", { class: "badge", text: t.events.length + " event" + (t.events.length === 1 ? "" : "s") }))),
+      h("dl", { class: "conn-meta" }, [
+        ["Rating", t.rating_system + " · starts at " + t.rating_initial + " ± " + t.rating_deviation],
+        ["Rated players", String(t.players)],
+        ["Matches", String(t.matches)],
+        ["Events", t.events.length ? t.events.map(function (e) { return e.name; }).join(", ") : "None yet"],
+      ].map(function (m) { return h("div", {}, h("dt", { text: m[0] }), h("dd", { text: m[1] })); })),
+      board,
+      h("div", { class: "key-actions" },
+        h("button", { class: "btn btn-sm", type: "button", onclick: function () { tournamentModal(d, base, t, reload); } }, icon("edit"), "Edit"),
+        h("button", { class: "btn btn-sm btn-ghost", type: "button", disabled: upcoming.length > 0,
+          title: upcoming.length ? "Upcoming or running events use it" : "", onclick: function () {
+            confirmModal({ title: "Delete tournament", ok: "Delete", danger: true,
+              text: "Delete the tournament '" + t.name + "'? Its ratings and match results stay in the database, but the page no longer shows them." })
+              .then(function (ok) {
+                if (ok) api("DELETE", url).then(function () { toast("Tournament deleted."); reload(); }).catch(function (e) { toast(e.message, "error"); });
+              });
+          } }, icon("trash"), "Delete")));
+  }
+
+  function tournamentModal(d, base, t, reload) {
+    var editing = !!t;
+    var m = modal({ title: editing ? "Edit tournament" : "Create tournament" });
+    var src = t || d.rating_defaults;
+    var name = h("input", { type: "text", maxlength: "60", value: t ? t.name : "", placeholder: "Autumn Cup 2026" });
+    var system = h("select", {}, d.rating_systems.map(function (s) { return h("option", { value: s, selected: s === src.rating_system, text: s }); }));
+    var initial = h("input", { type: "number", min: "0", max: "10000", class: "mono", value: String(src.rating_initial) });
+    var dev = h("input", { type: "number", min: "1", max: "3000", class: "mono", value: String(src.rating_deviation) });
+    var err = fieldErr();
+    var save = h("button", { class: "btn btn-primary", type: "button", onclick: function () {
+      save.disabled = true;
+      api(editing ? "PUT" : "POST", editing ? base + "/tournaments/" + t.id : base + "/tournaments",
+        { name: name.value.trim(), rating_system: system.value, rating_initial: +initial.value, rating_deviation: +dev.value })
+        .then(function () { m.close(); toast(editing ? "Tournament saved." : "Tournament created: pick it on its events."); reload(); })
+        .catch(function (e) { save.disabled = false; err.show(e.message); });
+    } }, icon("check"), editing ? "Save" : "Create tournament");
+    function row(label, el, hint) {
+      return h("div", { class: "form-row" }, h("label", { class: "lbl", text: label }), el, hint ? h("p", { class: "f-null", text: hint }) : null);
+    }
+    append(m.body, [
+      row("Name", name),
+      row("Rating system", system, "Same choices as a channel's Rating tab."),
+      h("div", { class: "conn-form-grid" }, row("Initial rating", initial), row("Initial deviation", dev)),
+      editing && t.players ? h("p", { class: "f-null", text: "Changes apply to players new to the tournament; existing ratings stay." }) : null,
+      err]);
+    append(m.foot, [h("button", { class: "btn btn-ghost", type: "button", onclick: m.close }, "Cancel"), save]);
+    name.focus();
+  }
+
+  function toLocalInput(ts) {
+    var dt = new Date(ts * 1000);
+    return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+
+  function eventModal(d, base, ev, reload) {
+    var editing = !!ev, live = editing && ev.state === "live", opened = editing && ev.state !== "scheduled";
+    var m = modal({ title: editing ? "Edit event" : "Create event", wide: true });
+    var soon = Math.ceil(Date.now() / 3600000) * 3600 + 3600;
+    var st = editing ? clone(ev) : { name: "", team_names: ["", ""], team_size: 4, start_at: soon, roster: [[], []], server: "", description: "",
+      series_length: 1, slipgate_results: true, rated: true, private: false, connector_id: d.connectors.length === 1 ? d.connectors[0].id : "",
+      cleanup_hours: d.settings.cleanup_hours, discord_event: true, auto_open: true, duration_minutes: d.default_duration, cover: d.covers[0].id,
+      tournament_id: "" };
+    var err = fieldErr();
+    var teamIn = [0, 1].map(function (i) {
+      return h("input", { type: "text", maxlength: "40", value: st.team_names[i], placeholder: i ? "Team 2" : "Team 1",
+        oninput: function () { st.team_names[i] = teamIn[i].value; name.placeholder = autoName(); drawRoster(); } });
+    });
+    function autoName() { return (st.team_names[0] || "Team 1") + " vs " + (st.team_names[1] || "Team 2"); }
+    var name = h("input", { type: "text", maxlength: "60", value: st.name || "", placeholder: autoName(),
+      oninput: function () { st.name = name.value; } });
+    if (editing && st.name === autoName()) { name.value = ""; }
+    var when = h("input", { type: "datetime-local", value: toLocalInput(st.start_at), disabled: opened });
+    var size = h("select", { disabled: opened, onchange: function () { st.team_size = +size.value; drawRoster(); } });
+    for (var n = 1; n <= d.max_team; n++) size.appendChild(h("option", { value: String(n), selected: n === st.team_size, text: n + " v " + n }));
+    var listId = "qg-servers-" + Date.now();
+    var server = h("input", { type: "text", class: "mono", value: st.server, placeholder: "131.153.224.87:27970", list: listId,
+      oninput: function () { st.server = server.value.trim(); } });
+    var dl = h("datalist", { id: listId }, d.servers.map(function (s) { return h("option", { value: s.address, label: (s.label ? s.label + " · " : "") + "#" + s.channel }); }));
+    var desc = h("textarea", { rows: "3", maxlength: "1000", placeholder: "Shown in the event's channel and its message." });
+    desc.value = st.description;
+    desc.addEventListener("input", function () { st.description = desc.value; });
+
+    var rosterBox = h("div", { class: "ev-roster" });
+    function drawRoster() {
+      clear(rosterBox);
+      var used = st.roster[0].concat(st.roster[1]);
+      [0, 1].forEach(function (i) {
+        var ul = h("ul");
+        st.roster[i].forEach(function (id) {
+          var p = evPerson(d, ev, id);
+          ul.appendChild(h("li", {}, p.avatar ? h("img", { src: p.avatar, alt: "" }) : h("span", { class: "ev-av", text: initials(p.name) }), h("span", { text: p.name }),
+            live ? null : h("button", { class: "icon-btn", type: "button", title: "Remove " + p.name, "aria-label": "Remove " + p.name,
+              onclick: function () { st.roster[i] = st.roster[i].filter(function (x) { return x !== id; }); drawRoster(); } }, icon("x"))));
+        });
+        var pick = h("select", { disabled: live || st.roster[i].length >= st.team_size, onchange: function () {
+          if (pick.value) { st.roster[i] = st.roster[i].concat([pick.value]); drawRoster(); }
+        } }, h("option", { value: "", text: st.roster[i].length >= st.team_size ? "Team is full" : "Add a linked player…" }),
+          d.linked.filter(function (p) { return used.indexOf(p.id) < 0; }).map(function (p) {
+            return h("option", { value: p.id, text: p.name + (p.in_match ? " (in a match)" : "") });
+          }));
+        rosterBox.appendChild(h("div", { class: "ev-team" },
+          h("h4", {}, st.team_names[i] || (i ? "Team 2" : "Team 1"), h("span", { class: "faint", text: " " + st.roster[i].length + "/" + st.team_size })),
+          ul, pick));
+      });
+    }
+    drawRoster();
+
+    var seriesCb = h("input", { type: "checkbox", checked: st.series_length > 1, disabled: live, onchange: function () { drawSeries(); } });
+    var seriesLen = h("select", { disabled: live }, [3, 5, 7, 9].map(function (x) { return h("option", { value: String(x), selected: x === st.series_length, text: "Best of " + x }); }));
+    function drawSeries() { seriesLen.hidden = !seriesCb.checked; }
+    drawSeries();
+    function check(key, label, hint, disabled) {
+      var cb = h("input", { type: "checkbox", checked: !!st[key], disabled: !!disabled, onchange: function () { st[key] = cb.checked; } });
+      return h("label", { class: "perm-item" + (disabled ? " dis" : "") }, cb, h("span", {}, h("b", { text: label }), h("small", { text: hint })));
+    }
+    var conn = h("select", { onchange: function () { st.connector_id = conn.value; } },
+      h("option", { value: "", text: "None" }),
+      d.connectors.map(function (c) { return h("option", { value: c.id, selected: c.id === st.connector_id, text: c.name }); }));
+    var tourn = h("select", { disabled: opened, onchange: function () { st.tournament_id = tourn.value; } },
+      h("option", { value: "", text: "None: the event keeps its own ratings" }),
+      d.tournaments.map(function (t) { return h("option", { value: String(t.id), selected: String(t.id) === st.tournament_id, text: t.name }); }));
+    var cleanup = h("select", { onchange: function () { st.cleanup_hours = +cleanup.value; } },
+      d.cleanup_choices.map(function (x) { return h("option", { value: String(x), selected: x === st.cleanup_hours, text: CLEANUP[x] }); }));
+    function lengthText(x) {
+      return x % 1440 === 0 ? (x / 1440) + " day" + (x === 1440 ? "" : "s") : (x / 60) + " hour" + (x === 60 ? "" : "s");
+    }
+    var length = h("select", { onchange: function () { st.duration_minutes = +length.value; } },
+      d.durations.map(function (x) { return h("option", { value: String(x), selected: x === st.duration_minutes, text: lengthText(x) + " after the start" }); }));
+    var coverBox = h("div", { class: "ev-covers", role: "radiogroup", "aria-label": "Cover image" });
+    function drawCovers() {
+      clear(coverBox);
+      d.covers.concat([{ id: "", label: "No image" }]).forEach(function (c) {
+        coverBox.appendChild(h("button", { type: "button", class: "ev-cover" + (st.cover === c.id ? " on" : ""), role: "radio",
+          "aria-checked": st.cover === c.id ? "true" : "false", title: c.label, disabled: opened,
+          onclick: function () { st.cover = c.id; drawCovers(); } },
+          c.url ? h("img", { src: c.url, alt: "" }) : h("span", { class: "ev-nocover", text: "—" }), h("span", { text: c.label })));
+      });
+    }
+    drawCovers();
+
+    function row(label, el, hint) {
+      return h("div", { class: "form-row" }, h("label", { class: "lbl", text: label }), el, hint ? h("p", { class: "f-null", text: hint }) : null);
+    }
+    var save = h("button", { class: "btn btn-primary", type: "button", onclick: submit }, icon("check"), editing ? "Save" : "Create event");
+    append(m.body, [
+      h("div", { class: "conn-form-grid" }, row("Team 1", teamIn[0]), row("Team 2", teamIn[1])),
+      h("div", { class: "conn-form-grid" }, row("Event name", name, "Empty: \"" + "Team 1 vs Team 2\" from the team names."),
+        row("Date and time", when, opened ? "Check-in is already open." : "Your local time. Discord shows it to everyone in their own.")),
+      h("div", { class: "conn-form-grid" }, row("Team size", size, opened ? "Can't change once check-in is open." : null),
+        row("Server", h("div", {}, server, dl), "IP:port. Suggestions come from your channels' Server Lists.")),
+      row("Roster", rosterBox, live ? "The match is on: use Swap player on the event to replace someone." : "Players who linked a Steam account. Only they can check in; the match starts when all of them have."),
+      row("Description", desc),
+      h("div", { class: "conn-form-grid" },
+        row("Series", h("div", { class: "ev-series" }, h("label", { class: "perm-item" + (live ? " dis" : "") }, seriesCb, h("span", {}, h("b", { text: "Play a series" }),
+          h("small", { text: "One match for several games; each game server result counts one." }))), seriesLen)),
+        row("Results from", conn, "The game server connector whose results go to this event's channel.")),
+      row("Tournament", tourn, opened ? "Can't change once check-in is open." : "Rated events in the same tournament share one rating history and leaderboard."),
+      row("Options", h("div", { class: "perm-grid one" },
+        check("rated", "Rated", "The event keeps its own ratings: captains report the result (/report) as in a ranked queue. Off: any player ends the match.", live),
+        check("slipgate_results", "Show Slipgate results", "Add Slipgate's details (stats link, highlights, demos) to results, when the connector has Slipgate details on."),
+        check("private", "Private channel", "Only the roster and admins see the event's channels. Off: everyone sees them, only the roster and admins can type."),
+        check("discord_event", "Promote with a Discord event", "A Discord scheduled event in the server's event list: \"◄Team 1 vs Team 2►\", Somewhere Else at this server's name, with the rosters as its description. Members press Interested and Discord reminds them. Not for private events." +
+          (d.can_create_events ? "" : " The bot needs the Create Events permission first."), opened),
+        check("auto_open", "Open check-in at the start time", "FragQ opens check-in and pings the roster when the event starts. Off: an admin presses Open check-in.", opened))),
+      row("Discord event cover", coverBox, opened ? "Check-in is open: the Discord event keeps its cover." : "Shown at the top of the Discord event."),
+      h("div", { class: "conn-form-grid" },
+        row("Discord event ends", length, "Starts with the match; doesn't repeat."),
+        row("Delete the channels", cleanup, "FragQ deletes the event's text and voice channels this long after the event ends. Results and ratings stay.")),
+      err]);
+    append(m.foot, [h("button", { class: "btn btn-ghost", type: "button", onclick: m.close }, "Cancel"), save]);
+    teamIn[0].focus();
+
+    function submit() {
+      var t = when.value ? Math.floor(new Date(when.value).getTime() / 1000) : null;
+      var body = { name: name.value.trim(), team_names: [teamIn[0].value.trim(), teamIn[1].value.trim()], team_size: +size.value,
+        roster: st.roster, server: server.value.trim(), description: desc.value.trim(), series_length: seriesCb.checked ? +seriesLen.value : 1,
+        slipgate_results: st.slipgate_results, rated: st.rated, private: st.private, connector_id: conn.value, cleanup_hours: +cleanup.value,
+        discord_event: st.discord_event, auto_open: st.auto_open, duration_minutes: +length.value, cover: st.cover,
+        tournament_id: tourn.value };
+      if (!opened) body.start_at = t;
+      save.disabled = true;
+      api(editing ? "PUT" : "POST", editing ? base + "/events/" + ev.id : base + "/events", body).then(function () {
+        m.close();
+        toast(editing ? "Event saved." : "Event created: its channels are ready.");
+        reload();
+      }).catch(function (e) {
+        save.disabled = false;
+        err.show(e.message);
+      });
+    }
+  }
+
+  function swapModal(d, url, ev, reload) {
+    var m = modal({ title: "Swap player · " + ev.name });
+    var ids = ev.roster[0].concat(ev.roster[1]);
+    var out = h("select", {}, [0, 1].map(function (i) {
+      return h("optgroup", { label: ev.team_names[i] }, ev.roster[i].map(function (id) { return h("option", { value: id, text: evPerson(d, ev, id).name }); }));
+    }));
+    var inn = h("select", {}, h("option", { value: "", text: "Choose a linked player…" }),
+      d.linked.filter(function (p) { return ids.indexOf(p.id) < 0; }).map(function (p) {
+        return h("option", { value: p.id, disabled: p.in_match && ev.state === "live", text: p.name + (p.in_match ? " (in a match)" : "") });
+      }));
+    var err = fieldErr();
+    var ok = h("button", { class: "btn btn-primary", type: "button", onclick: function () {
+      ok.disabled = true;
+      api("POST", url + "/swap", { out: out.value, "in": inn.value }).then(function () { m.close(); toast("Player swapped."); reload(); })
+        .catch(function (e) { ok.disabled = false; err.show(e.message); });
+    } }, icon("swap"), "Swap");
+    append(m.body, [
+      h("div", { class: "form-row" }, h("label", { class: "lbl", text: "Take out" }), out),
+      h("div", { class: "form-row" }, h("label", { class: "lbl", text: "Put in" }), inn,
+        h("p", { class: "f-null", text: ev.state === "live" ? "The match is on: the new player takes their place in the match right away." : "The new player gets access to the event's channels." })),
+      err]);
+    append(m.foot, [h("button", { class: "btn btn-ghost", type: "button", onclick: m.close }, "Cancel"), ok]);
+  }
+
+  function queueGenSettings(d, base, reload) {
+    var s = clone(d.settings);
+    var err = fieldErr();
+    function opt(v, t, sel) { return h("option", { value: v, selected: v === sel, text: t }); }
+    var cat = h("select", {}, opt("", "FragQ Events (FragQ creates it)", s.category_id), d.categories.map(function (c) { return opt(c.id, c.name, s.category_id); }));
+    var role = h("select", {}, opt("", "None: Discord administrators only", s.organizer_role_id), d.roles.map(function (r) { return opt(r.id, "@" + r.name, s.organizer_role_id); }));
+    var mode = h("select", { onchange: drawLobby }, Object.keys(LOBBY).map(function (k) { return opt(k, LOBBY[k], s.lobby_mode); }));
+    var lobby = h("select", {}, opt("", "Choose a voice channel…", s.lobby_id), d.voice_channels.map(function (v) { return opt(v.id, v.name, s.lobby_id); }));
+    var lobbyRow = h("div", { class: "form-row" }, h("label", { class: "lbl", text: "Lobby voice channel" }), lobby);
+    function drawLobby() { lobbyRow.hidden = mode.value !== "global_choose"; }
+    drawLobby();
+    var cleanup = h("select", {}, d.cleanup_choices.map(function (x) { return opt(String(x), CLEANUP[x], String(s.cleanup_hours)); }));
+    var save = h("button", { class: "btn btn-primary btn-sm", type: "button", onclick: function () {
+      save.disabled = true;
+      api("PUT", base + "/queuegen/settings", { category_id: cat.value, organizer_role_id: role.value, lobby_mode: mode.value, lobby_id: lobby.value, cleanup_hours: +cleanup.value })
+        .then(function () { err.show(null); toast("QueueGen settings saved."); reload(); })
+        .catch(function (e) { save.disabled = false; err.show(e.message); });
+    } }, icon("check"), "Save");
+    function row(label, el, hint) {
+      return h("div", { class: "form-row" }, h("label", { class: "lbl", text: label }), el, hint ? h("p", { class: "f-null", text: hint }) : null);
+    }
+    return h("section", { class: "panel" },
+      h("div", { class: "panel-head" }, h("h2", { text: "QueueGen settings" }), h("span", { style: "margin-left:auto" }), save),
+      h("div", { class: "qg-settings" },
+        h("div", { class: "conn-form-grid" },
+          row("Events category", cat, "Where FragQ creates each event's text and voice channels."),
+          row("Organizer role", role, "Can type in every event channel, join its voice channels and moderate its match, besides the roster and Discord administrators.")),
+        h("div", { class: "conn-form-grid" },
+          row("Lobby", mode, s.lobby_mode === "global_generate" && s.lobby_generated ? "FragQ created the shared Lobby with an earlier event." : "Players wait here; when the match starts FragQ moves them into their team's channel, which it creates for each event."),
+          row("Delete event channels", cleanup, "The default for new events.")),
+        lobbyRow, err));
+  }
+
   // ------------------------------------------------------------------ connectors page (game connectors, see bot/connectors.py)
   var DOCS = "https://d00msdaydevice.github.io/fragq/";
   var DENIED = { ip: "IP not allowed", expired: "key expired", disabled: "connector disabled", can_results: "results not allowed",
@@ -1893,7 +2305,7 @@
 
     var perms = [
       ["can_results", "Send match results", "Post end-of-match results and stats in the queue's channel."],
-      ["can_check", "Check linked players", "Ask whether players have linked a Steam account, so the server can keep unlinked players in spectator."],
+      ["can_check", "Check linked players", "Ask whether players have linked a Steam account, so the server can keep unlinked players in spectator, and read the players and teams of its queues' current matches (with their Discord names), for !queueverify."],
       ["can_link", "Link Steam accounts from the game", "Players can type !link on the game server. FragQ asks them to confirm in a Discord direct message."],
       ["can_voice", "Move players in voice", "Move players between a queue's Lobby and team voice channels, for substitutes and team changes. Only works for queues with voice moves turned on."],
       ["can_export", "Read linked accounts", "Read every Steam and Discord link of this server's members, for a tool such as Fragdex. Needs no queue. Don't give this to a game server."],

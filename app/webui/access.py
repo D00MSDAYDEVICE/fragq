@@ -51,11 +51,12 @@ CATALOG = [
 	("manage_channels", "Server", "Manage channels", "Enable the bot on new channels and disable it. Whole-server grants only."),
 	("manage_users", "Server", "Manage users", "Use the Users page to grant access to others, up to their own permissions."),
 	("manage_connectors", "Server", "Manage connectors", "Create and change game connectors and their keys. Whole-server grants only."),
+	("manage_events", "Server", "Manage events", "Use the QueueGen page: create scheduled events with their own channels, rosters and voice channels. Whole-server grants only."),
 ]
 PERMS = [p[0] for p in CATALOG]
 ALL = frozenset(PERMS)
-SERVER_ONLY = frozenset({"manage_channels", "manage_connectors"})
-CHANNEL_ADMIN = ALL - {"manage_channels", "manage_users", "manage_connectors"}
+SERVER_ONLY = frozenset({"manage_channels", "manage_connectors", "manage_events"})
+CHANNEL_ADMIN = ALL - {"manage_channels", "manage_users", "manage_connectors", "manage_events"}
 
 PRESETS = [
 	("viewer", "Viewer", ["view", "stats"]),

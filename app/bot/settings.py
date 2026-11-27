@@ -54,6 +54,11 @@ def get(name):
 	return _values.get(name, DEFAULTS.get(name))
 
 
+def names(prefix=""):
+	""" The stored setting names starting with prefix (per-server settings such as queuegen:<guild id>). """
+	return [n for n in _values if n.startswith(prefix)]
+
+
 async def put(name, value):
 	_values[name] = value
 	await db.insert("fragq_settings", dict(name=name, value=json.dumps(value)), on_dublicate="replace")

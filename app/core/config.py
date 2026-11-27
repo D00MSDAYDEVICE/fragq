@@ -94,10 +94,11 @@ cfg = SimpleNamespace(
 
 if not cfg.DC_INVITE_LINK and cfg.DC_CLIENT_ID:
 	# Manage Channels, Add Reactions, View Channels, Send Messages, Manage Messages, Embed Links, Attach Files
-	# (queue panel avatar image), Read Message History, Connect and Move Members (voice moves), Manage Roles
+	# (queue panel avatar image), Read Message History, Connect and Move Members (voice moves), Manage Roles,
+	# Speak and Create Events (QueueGen: event voice channels, Discord scheduled events)
 	cfg.DC_INVITE_LINK = (
 		"https://discord.com/oauth2/authorize?client_id={}&scope=bot+applications.commands"
-		"&permissions=286387280".format(cfg.DC_CLIENT_ID)
+		"&permissions=17592474528848".format(cfg.DC_CLIENT_ID)
 	)
 
 

@@ -15,7 +15,7 @@ automatically; anyone else can be given access on the **Users** page.
 | The bot owner (`DISCORD_OWNER_ID`) | Everything on every server the bot is on, plus the **Bot status** and [Settings](settings-page.md) pages |
 | The server owner | Everything on that server |
 | Members with Discord's *Administrator* permission | Everything on that server |
-| Members with a channel's **Admin role** | Everything on that channel, except *Manage channels*, *Manage users* and *Manage connectors* |
+| Members with a channel's **Admin role** | Everything on that channel, except *Manage channels*, *Manage users*, *Manage connectors* and *Manage events* |
 
 These can't be changed on the Users page; they are listed there under **Built-in access**.
 
@@ -55,6 +55,7 @@ changed it last.
 | **Manage channels** | Enable the bot on new channels and disable it. Whole-server grants only. |
 | **Manage users** | Use the Users page, but only to give out permissions they hold themselves, within their own scope |
 | **Manage connectors** | Create and change [game connectors](../connectors/index.md) and their keys. Whole-server grants only. |
+| **Manage events** | Use the [QueueGen](queuegen.md) page: scheduled events with their own channels, rosters and Discord events, tournaments, and the QueueGen settings. Whole-server grants only. |
 
 ### Presets
 

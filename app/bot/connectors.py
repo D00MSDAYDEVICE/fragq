@@ -107,6 +107,7 @@ MAX_RATE = 10000
 MAX_ALLOWED_IPS = 50
 MAX_CONNECTORS = 25          # per Discord server
 MATCH_WINDOW = 6 * 3600      # a result can belong to a FragQ match started this long ago
+LIVE_WINDOW = 2 * 3600       # POST /match: an unranked match that started this long ago may still be playing
 LINK_TTL = 15 * 60           # an in-game !link waits this long for the Discord confirmation
 LINK_COOLDOWN = 60           # between !link requests for the same Steam account
 USAGE_FLUSH = 30
@@ -898,8 +899,9 @@ async def active_matches(c, data):
 
 	Matches still in FragQ (check-in, draft, a ranked match waiting for its report) have "finished": false. An
 	unranked match leaves FragQ as soon as its teams are set, which is when the game starts, so the unranked
-	matches started within MATCH_WINDOW are listed too, from the match history, with "finished": true and state
-	"started". Without them a game server would see no match for the whole of an unranked game.
+	matches started within LIVE_WINDOW (2 hours) are listed too, from the match history, with "finished": true and
+	state "started". Without them a game server would see no match for the whole of an unranked game; longer, and
+	!queueverify could check a casual game after a PUG against that PUG.
 	"""
 	name = data.get("queue") if isinstance(data, dict) else None
 	if name is not None and not isinstance(name, str):
@@ -935,7 +937,7 @@ async def active_matches(c, data):
 			"SELECT m.match_id, m.queue_id, m.queue_name, m.alpha_name, m.beta_name, m.at, p.user_id, p.nick, p.team "
 			"FROM `qc_matches` AS m JOIN `qc_player_matches` AS p ON p.match_id=m.match_id AND p.channel_id=m.channel_id "
 			f"WHERE m.ranked=0 AND m.at>=%s AND m.channel_id IN ({', '.join(['%s'] * len(channels))})",
-			(int(time.time()) - MATCH_WINDOW, *channels)
+			(int(time.time()) - LIVE_WINDOW, *channels)
 		)
 		guild = dc.get_guild(c["guild_id"])
 		found = {}

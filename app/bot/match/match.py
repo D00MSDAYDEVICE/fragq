@@ -74,6 +74,7 @@ class Match:
 		if match.ranked or match.held:
 			match.states.append(match.WAITING_REPORT)
 		bot.active_matches.append(match)
+		await bot.queuegen.match_started(match)
 
 	@classmethod
 	async def fake_ranked_match(cls, ctx, queue, qc, winners, losers, draw=False, **kwargs):
@@ -246,6 +247,12 @@ class Match:
 			self.teams[1].set(self.sort_players(
 				[p for p in self.players if p not in best_team][:self.cfg['team_size']]
 			))
+			self.teams[2].set([p for p in self.players if p not in [*self.teams[0], *self.teams[1]]])
+		elif pick_teams == "premade" and self.cfg.get('teams'):
+			# fixed teams (a QueueGen event): [[user ids], [user ids]]
+			by_id = {p.id: p for p in self.players}
+			for team, ids in zip(self.teams[:2], self.cfg['teams']):
+				team.set([by_id[uid] for uid in ids if uid in by_id])
 			self.teams[2].set([p for p in self.players if p not in [*self.teams[0], *self.teams[1]]])
 		elif pick_teams == "random teams":
 			self.teams[0].set(random.sample(self.players, min(len(self.players)//2, self.cfg['team_size'])))
@@ -460,6 +467,7 @@ class Match:
 			await bot.stats.register_match_ranked(ctx, self)
 		else:
 			await bot.stats.register_match_unranked(ctx, self)
+		await bot.queuegen.match_done(self, reported=True)
 
 	def print(self):
 		return f"> *({self.id})* **{self.queue.name}** | `{join_and([get_nick(p) for p in self.players])}`"
@@ -477,3 +485,4 @@ class Match:
 		if self.state == self.WAITING_REPORT:
 			bot.voice.start(bot.voice.match_ended(self))
 		await bot.series.match_over(self, canceled=True)
+		await bot.queuegen.match_done(self, reported=False)

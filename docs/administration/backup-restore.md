@@ -26,11 +26,14 @@ Press **Download backup** to save `fragq-backup-<date>.json`. It contains:
 - the Steam links;
 - the web panel access grants from the [Users page](access.md);
 - the [game connectors](../connectors/index.md), with their key hashes, so game servers keep working
-  with their current keys.
+  with their current keys;
+- [QueueGen](queuegen.md): each server's QueueGen settings and its tournaments with their rating
+  settings.
 
 Not included: ratings, match history and player stats (use a [database backup](#back-up-the-database)),
-the queue panels themselves, and pending Steam account changes. Channels, roles and members are stored
-by their Discord ids.
+the queue panels themselves, pending Steam account changes, and QueueGen events with the channels FragQ
+made for them (they're one-off and deleted after the event). Channels, roles and members are stored by
+their Discord ids.
 
 !!! warning "Keep it private"
     The file lists your members' Steam accounts, and the Steam API key if you included it.
@@ -42,7 +45,7 @@ by their Discord ids.
 2. On the Settings page, press **Load backup file…** and pick the file. FragQ shows when and where it
    was made, and what it contains.
 3. Untick anything you don't want: **Bot settings**, **Channels and queues**, **Steam links**,
-   **Web panel access**.
+   **Web panel access**, **Game connectors**, **QueueGen**.
 4. Press **Check first** to see what would happen without changing anything: channels to enable or
    update, queues to create or update, links and grants to add, and anything that will be skipped
    (for example a channel the bot can't see, or a setting that refers to a deleted role).
@@ -52,7 +55,9 @@ by their Discord ids.
 A restore never deletes anything. Channels from the backup are enabled if needed and get the backup's
 settings; queues are matched by name, created if missing and updated otherwise; queues and channels that
 aren't in the backup are left alone. Steam links and access grants are added, or replace the existing
-one for the same member or role. Restoring the same file twice gives the same result.
+one for the same member or role. Tournaments are matched by name: one with the same name gets the
+backup's rating settings, others are created, keeping their rating key when it's free so they find their
+ratings again in the same database. Restoring the same file twice gives the same result.
 
 ## What to back up
 

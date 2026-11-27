@@ -22,7 +22,7 @@ from webui import schema, access
 
 FORMAT = "fragq-backup"
 VERSION = 1
-PARTS = ("settings", "channels", "steam_links", "web_access", "connectors")
+PARTS = ("settings", "channels", "steam_links", "web_access", "connectors", "queuegen")
 
 
 def build(include_steam_key=False):
@@ -31,6 +31,8 @@ def build(include_steam_key=False):
 		settings["steam_api_key"] = bot.steam.api_key()
 	channels = []
 	for qc in bot.queue_channels.values():
+		if bot.queuegen.is_event_channel(qc.id):   # QueueGen's own channels: deleted after their event
+			continue
 		guild = dc.get_guild(qc.guild_id)
 		channel = dc.get_channel(qc.id)
 		channels.append(dict(
@@ -52,7 +54,21 @@ def build(include_steam_key=False):
 		channels=[str(c) for c in g["channels"]], perms=g["perms"],
 		granted_by=str(g.get("granted_by") or ""), granted_by_name=g.get("granted_by_name"),
 	) for g in access.grants.values()]
-	queue_ref = {q.id: dict(channel_id=str(qc.id), name=q.name) for qc in bot.queue_channels.values() for q in qc.queues}
+	queue_ref = {q.id: dict(channel_id=str(qc.id), name=q.name) for qc in bot.queue_channels.values() for q in qc.queues
+				 if not bot.queuegen.is_event_channel(qc.id)}
+	queuegen = []
+	for gid in sorted({t["guild_id"] for t in bot.queuegen.tournaments.values()}
+					  | {int(k.split(":", 1)[1]) for k in bot.settings.names("queuegen:") if k.split(":", 1)[1].isdigit()}):
+		guild = dc.get_guild(gid)
+		s = bot.queuegen.settings(gid)
+		queuegen.append(dict(
+			guild_id=str(gid), guild_name=guild.name if guild else None,
+			settings={k: (str(s[k]) if s.get(k) else None) for k in ("category_id", "organizer_role_id", "lobby_id")}
+			| dict(lobby_mode=s["lobby_mode"], lobby_generated=bool(s.get("lobby_generated")), cleanup_hours=s["cleanup_hours"]),
+			tournaments=[dict(id=t["id"], key=t["key"], name=t["name"], **{k: t[k] for k in bot.queuegen.RATING_DEFAULTS},
+							  created_by_name=t.get("created_by_name"), created_at=t.get("created_at"))
+						 for t in bot.queuegen.guild_tournaments(gid)],
+		))
 	connectors = [dict(
 		guild_id=str(c["guild_id"]), name=c["name"], game=c["game"],
 		queues=[queue_ref[q] for q in c["queues"] if q in queue_ref],
@@ -65,6 +81,7 @@ def build(include_steam_key=False):
 		format=FORMAT, version=VERSION, fragq_version=__version__, created_at=int(time.time()),
 		source=cfg.WS_ROOT_URL or None,
 		settings=settings, channels=channels, steam_links=links, web_access=grants, connectors=connectors,
+		queuegen=queuegen,
 	)
 
 
@@ -74,7 +91,8 @@ def validate(data):
 		raise ValueError("This is not a FragQ backup file.")
 	if not isinstance(data.get("version"), int) or data["version"] > VERSION:
 		raise ValueError("This backup was made by a newer FragQ version. Update FragQ first.")
-	for key, kind in (("settings", dict), ("channels", list), ("steam_links", list), ("web_access", list), ("connectors", list)):
+	for key, kind in (("settings", dict), ("channels", list), ("steam_links", list), ("web_access", list), ("connectors", list),
+					  ("queuegen", list)):
 		if not isinstance(data.get(key, kind()), kind):
 			raise ValueError(f"The backup's '{key}' section is damaged.")
 
@@ -98,6 +116,65 @@ async def _check(factory, values, guild):
 		except schema.ConfigError as e2:
 			skipped.update(e2.errors)
 			return {}, skipped
+
+
+async def _restore_queuegen(data, report, dry_run, who):
+	"""
+	QueueGen settings and tournaments, per server. A tournament keeps its rating key when it's free, so it finds its ratings
+	again in the same database; one with the same name is updated instead. Events aren't in backups.
+	"""
+	qg = bot.queuegen
+	r = report["queuegen"] = dict(servers=0, tournaments_added=0, tournaments_updated=0, missing=0, notes=[])
+	for g in data.get("queuegen") or []:
+		guild = dc.get_guild(_int(g.get("guild_id")) or 0)
+		if guild is None:
+			r["missing"] += 1
+			r["notes"].append(f"QueueGen of {g.get('guild_name') or 'an unknown server'}: the bot isn't on that server, skipped.")
+			continue
+		r["servers"] += 1
+		s = g.get("settings") or {}
+		values = {}
+		for key, label, find in (("category_id", "Events category", guild.get_channel), ("organizer_role_id", "Organizer role", guild.get_role)):
+			v = _int(s.get(key))
+			values[key] = str(v) if v and find(v) else ""
+			if v and not find(v):
+				r["notes"].append(f"{guild.name}: the QueueGen {label} no longer exists, left unset.")
+		mode = s.get("lobby_mode") if s.get("lobby_mode") in qg.LOBBY_MODES else "global_generate"
+		lobby = _int(s.get("lobby_id"))
+		lobby_ok = bool(lobby and guild.get_channel(lobby) in guild.voice_channels)
+		if mode == "global_choose" and not lobby_ok:
+			r["notes"].append(f"{guild.name}: the chosen events Lobby no longer exists; FragQ will create one with the next event.")
+			mode = "global_generate"
+		values.update(lobby_mode=mode, lobby_id=str(lobby) if lobby_ok else "",
+					  cleanup_hours=s.get("cleanup_hours") if s.get("cleanup_hours") in qg.CLEANUP_CHOICES else 24)
+		if not dry_run:
+			try:
+				await qg.save_settings(guild, values)
+				if mode == "global_generate" and lobby_ok and s.get("lobby_generated"):   # the Lobby FragQ made before
+					st = qg.settings(guild.id)
+					st.update(lobby_id=lobby, lobby_generated=True)
+					await bot.settings.put(f"queuegen:{guild.id}", st)
+			except qg.FieldError as e:
+				r["notes"].append(f"{guild.name}: QueueGen settings not restored ({e}).")
+		for t in g.get("tournaments") or []:
+			name = str(t.get("name") or "").strip()
+			old = next((x for x in qg.guild_tournaments(guild.id) if x["name"].casefold() == name.casefold()), None)
+			try:
+				if old is not None:
+					r["tournaments_updated"] += 1
+					if not dry_run:
+						await qg.update_tournament(guild, old, t)
+					else:
+						qg.clean_tournament(t, guild, old)
+				else:
+					r["tournaments_added"] += 1
+					if not dry_run:   # its rating key, when free, finds its ratings again in the same database
+						await qg.create_tournament(guild, t, str(t.get("created_by_name") or who), key=_int(t.get("key")))
+					else:
+						qg.clean_tournament(t, guild)
+			except qg.FieldError as e:
+				r["notes"].append(f"{guild.name}: tournament '{name}' skipped ({e}).")
+	r["notes"].append("Events aren't part of backups: they're one-off, with their own channels.")
 
 
 async def restore(data, parts, dry_run=False, who="?"):
@@ -254,6 +331,9 @@ async def restore(data, parts, dry_run=False, who="?"):
 			if not dry_run:
 				unmatched = queue_id(x.get("unmatched_queue")) if x.get("unmatched_queue") else 0
 				await bot.connectors.restore(gid, x, queues, unmatched if unmatched in queues else 0, old)
+
+	if "queuegen" in parts:
+		await _restore_queuegen(data, report, dry_run, who)
 
 	if "settings" in parts and old_require and not dry_run:
 		await bot.settings.put("require_steam_link", True)

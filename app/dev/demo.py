@@ -34,7 +34,7 @@ os.environ.setdefault("LOG_LEVEL", "INFO")
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-from nextcord import ChannelType, Embed, InteractionType, NotFound  # noqa: E402
+from nextcord import ChannelType, Embed, InteractionType, NotFound, Forbidden, HTTPException, ScheduledEventStatus  # noqa: E402
 from core import config, console, database, locales, cfg_factory  # noqa: E402,F401
 from core.client import dc  # noqa: E402
 
@@ -70,12 +70,76 @@ class Perms:
 		self.administrator = administrator
 		self.send_messages = send_messages
 		self.view_channel = self.connect = self.move_members = True
+		self.embed_links = self.read_message_history = self.add_reactions = self.speak = True
+		self.manage_channels = self.manage_roles = self.manage_events = administrator
+		self.value = (1 << 44) if administrator else 0   # Create Events
+
+	@property
+	def read_messages(self):   # nextcord's old name for View Channels (PermissionOverwrite lists both)
+		return self.view_channel
+
+	@property
+	def manage_permissions(self):
+		return self.manage_roles
+
+
+def _forbidden():
+	return Forbidden(SimpleNamespace(status=403, reason="Forbidden"), {"code": 50013, "message": "Missing Permissions"})
+
+
+def _check_overwrites(guild, overwrites):
+	""" Like Discord: a bot can't allow or deny in a channel a permission it doesn't have itself (50013). """
+	p = guild.me.guild_permissions
+	if p.administrator:
+		return
+	for ow in (overwrites or {}).values():
+		for name, value in ow:
+			if value is not None and not getattr(p, name, False):
+				console.log.info(f"DEMO| refused: the bot's overwrites hand out {name}, which it doesn't have")
+				raise _forbidden()
+
+
+class FakeScheduledEvent:
+	""" A Discord scheduled event, with Discord's status rules. """
+
+	def __init__(self, guild, name, entity_type, start_time, channel=None, metadata=None, end_time=None, description=None):
+		self.guild, self.id, self.name, self.entity_type = guild, next(_new_ids), name, entity_type
+		self.start_time, self.end_time, self.description, self.channel = start_time, end_time, description, channel
+		self.location = getattr(metadata, "location", None)
+		self.status = ScheduledEventStatus.scheduled
+
+	async def edit(self, status=None, type=None, metadata=None, reason=None, **kwargs):
+		if status is not None:
+			ok = {ScheduledEventStatus.scheduled: (ScheduledEventStatus.active, ScheduledEventStatus.canceled),
+				  ScheduledEventStatus.active: (ScheduledEventStatus.completed,)}.get(self.status, ())
+			if status not in ok:
+				raise HTTPException(SimpleNamespace(status=400, reason="Bad Request"), f"Can't go from {self.status.name} to {status.name}")
+			self.status = status
+		if type is not None:
+			self.entity_type = type
+		if metadata is not None:
+			self.location = metadata.location
+		for k, v in kwargs.items():
+			setattr(self, k, v)
+		console.log.info(f"DEMO| scheduled event '{self.name}' edited ({self.status.name})")
+		return self
+
+	async def delete(self):
+		self.guild.scheduled_events.pop(self.id, None)
+		console.log.info(f"DEMO| scheduled event '{self.name}' deleted")
+
+	def to_dict(self):
+		return dict(id=str(self.id), name=self.name, status=self.status.name, type=self.entity_type.name,
+					channel=str(self.channel.id) if self.channel else None, location=self.location,
+					start=int(self.start_time.timestamp()), end=int(self.end_time.timestamp()) if self.end_time else None,
+					description=self.description, image=len(self.image) if isinstance(getattr(self, "image", None), bytes) else 0)
 
 
 class Role:
 	def __init__(self, guild, rid, name, color=0, managed=False):
 		self.guild, self.id, self.name, self.color, self.managed = guild, rid, name, Color(color), managed
 		self.mentionable = True
+		self.permissions = Perms(administrator=name.startswith("ADMIN"))
 
 	def is_default(self):
 		return self.id == self.guild.id
@@ -86,8 +150,39 @@ class Role:
 
 
 class Category:
-	def __init__(self, name, position):
-		self.name, self.position = name, position
+	type = ChannelType.category
+
+	def __init__(self, name, position, cid=None, guild=None):
+		self.name, self.position, self.id, self.guild = name, position, cid, guild
+		self.overwrites = {}
+
+	async def delete(self, reason=None):
+		if self in self.guild.channels:
+			self.guild.channels.remove(self)
+
+
+# Channels created while the demo runs (QueueGen): new ids on every start, like Discord's, so a channel never
+# inherits the queues of one from an earlier run (the database outlives the fake server).
+_new_ids = iter(range(310000000000000000 + int(time.time()) * 1000, 320000000000000000))
+
+
+class Editable:
+	""" Channels FragQ can rename, re-permission and delete (QueueGen). """
+
+	async def edit(self, name=None, topic=None, overwrites=None, **kwargs):
+		if overwrites is not None:
+			_check_overwrites(self.guild, overwrites)
+		if name is not None:
+			self.name = name
+		if topic is not None:
+			self.topic = topic
+		if overwrites is not None:
+			self.overwrites = dict(overwrites)
+
+	async def delete(self, reason=None):
+		console.log.info(f"DEMO| channel #{self.name} deleted ({reason})")
+		if self in self.guild.channels:
+			self.guild.channels.remove(self)
 
 
 _msg_ids = iter(range(500000000000000000, 600000000000000000))
@@ -146,12 +241,13 @@ class Message:
 		pass
 
 
-class TextChannel:
+class TextChannel(Editable):
 	type = ChannelType.text
 
 	def __init__(self, guild, cid, name, category=None, position=0):
 		self.guild, self.id, self.name, self.category, self.position = guild, cid, name, category, position
 		self.messages = []
+		self.topic, self.overwrites = None, {}
 
 	@property
 	def mention(self):
@@ -183,15 +279,13 @@ class TextChannel:
 		del self.messages[:-40]
 		return msg
 
-	async def edit(self, *args, **kwargs):
-		pass
 
-
-class VoiceChannel:
+class VoiceChannel(Editable):
 	type = ChannelType.voice
 
 	def __init__(self, guild, cid, name, category=None, position=0):
 		self.guild, self.id, self.name, self.category, self.position = guild, cid, name, category, position
+		self.topic, self.overwrites = None, {}
 
 	@property
 	def members(self):
@@ -264,6 +358,7 @@ class Guild:
 		self.roles, self.channels, self.members, self.emojis = [], [], [], []
 		self.roles.append(Role(self, gid, "@everyone"))
 		self.me = None
+		self.scheduled_events = {}
 
 	@property
 	def text_channels(self):
@@ -276,6 +371,52 @@ class Guild:
 	@property
 	def member_count(self):
 		return len(self.members)
+
+	@property
+	def default_role(self):
+		return self.roles[0]
+
+	async def create_category(self, name, reason=None, **kwargs):
+		c = Category(name, 9, next(_new_ids), self)
+		self.channels.append(c)
+		console.log.info(f"DEMO| category {name} created ({reason})")
+		return c
+
+	def get_scheduled_event(self, eid):
+		return self.scheduled_events.get(eid)
+
+	async def fetch_scheduled_event(self, eid):
+		if eid not in self.scheduled_events:
+			raise NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Guild Scheduled Event")
+		return self.scheduled_events[eid]
+
+	async def create_scheduled_event(self, name, entity_type, start_time, reason=None, privacy_level=None, image=None, **kwargs):
+		p = self.me.guild_permissions
+		if not (p.administrator or p.manage_events or p.value & (1 << 44)):
+			raise _forbidden()
+		if start_time.timestamp() < time.time():
+			raise HTTPException(SimpleNamespace(status=400, reason="Bad Request"), "Cannot schedule event in the past")
+		se = FakeScheduledEvent(self, name, entity_type, start_time, **kwargs)
+		se.image = image
+		self.scheduled_events[se.id] = se
+		console.log.info(f"DEMO| scheduled event '{name}' created ({entity_type.name}, {reason})")
+		return se
+
+	async def create_text_channel(self, name, category=None, overwrites=None, topic=None, reason=None, **kwargs):
+		_check_overwrites(self, overwrites)
+		c = TextChannel(self, next(_new_ids), name, category, 50 + len(self.channels))
+		c.topic, c.overwrites = topic, dict(overwrites or {})
+		self.channels.append(c)
+		console.log.info(f"DEMO| text channel #{name} created ({reason})")
+		return c
+
+	async def create_voice_channel(self, name, category=None, overwrites=None, reason=None, **kwargs):
+		_check_overwrites(self, overwrites)
+		c = VoiceChannel(self, next(_new_ids), name, category, 50 + len(self.channels))
+		c.overwrites = dict(overwrites or {})
+		self.channels.append(c)
+		console.log.info(f"DEMO| voice channel {name} created ({reason})")
+		return c
 
 	def get_role(self, rid):
 		return next((r for r in self.roles if r.id == rid), None)
@@ -507,7 +648,29 @@ async def dev_state(request):
 		names=members,
 		voice={str(c.id): dict(name=c.name, members=[str(m.id) for m in c.members]) for c in g.voice_channels},
 		messages={str(c.id): [dict(m.data, id=str(m.id)) for m in c.messages] for c in g.text_channels},
+		scheduled_events=[se.to_dict() for se in g.scheduled_events.values()],
+		text_channels=[dict(id=str(c.id), name=c.name) for c in g.text_channels],
 	))
+
+
+async def dev_bot_perms(request):
+	"""
+	The bot's server permissions on the first server: {"admin": true} (the default), or {"admin": false, "deny": [...]}
+	for a role with the invite's permissions minus those listed (e.g. ["speak", "create_events"]).
+	"""
+	body = await request.json()
+	g = GUILDS[0]
+	p = Perms(administrator=bool(body.get("admin", True)))
+	if not p.administrator:
+		p.manage_channels = p.manage_roles = True
+		p.value = 1 << 44
+		for name in body.get("deny") or []:
+			if name == "create_events":
+				p.value = 0
+			else:
+				setattr(p, name, False)
+	g.me.guild_permissions = p
+	return web.json_response(dict(ok=True))
 
 
 async def dev_press(request):
@@ -598,6 +761,7 @@ async def main():
 	app.router.add_post("/dev/modal", dev_modal)
 	app.router.add_post("/dev/say", dev_say)
 	app.router.add_post("/dev/voice", dev_voice)
+	app.router.add_post("/dev/bot-perms", dev_bot_perms)
 	app.router.add_get("/dev/dms", dev_dms)
 	app.router.add_post("/dev/dm-press", dev_dm_press)
 	runner = web.AppRunner(app, access_log=None)

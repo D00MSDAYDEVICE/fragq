@@ -18,9 +18,11 @@ Press **Invite bot** in the top bar, pick your server and approve. The bot asks 
 | Attach Files | The row of player avatars on the queue panel |
 | Add Reactions | Check-in (☑ / ⛔) and map votes |
 | Read Message History, Manage Messages | Updating, moving and cleaning up its own messages |
-| Manage Roles | Rank roles and promotion roles |
-| Manage Channels | The same as PUBobot2 |
+| Manage Roles | Rank roles and promotion roles; who can see and type in QueueGen event channels |
+| Manage Channels | The same as PUBobot2; QueueGen creates and deletes event channels |
 | View Channels, Connect, Move Members | [Voice moves](../administration/voice.md), off until you turn them on for a queue |
+| Speak | QueueGen event voice channels (the bot can only let players speak there if it may itself) |
+| Create Events | QueueGen: a Discord scheduled event for each event |
 
 The server then shows up in the rail on the left.
 
@@ -28,7 +30,8 @@ The server then shows up in the rail on the left.
     Embed Links and Attach Files were added to the invite in FragQ 1.0.0. If the bot joined with an
     older link, give its role those two permissions in **Server Settings → Roles**, or invite it again
     with the new link (it stays on the server and keeps everything). The same goes for View Channels,
-    Connect and Move Members, added in FragQ 1.3.0 for [voice moves](../administration/voice.md).
+    Connect and Move Members, added in FragQ 1.3.0 for [voice moves](../administration/voice.md), and
+    Speak and Create Events, added in FragQ 1.6.0 for QueueGen.
 
 !!! note "Rating prefixes in nicknames"
     The channel setting *Set ratings to nicks* (`rating_nicks`) also needs **Manage Nicknames**, which

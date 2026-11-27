@@ -214,6 +214,8 @@ def bump(qc):
 
 def added(qc):
 	""" A player joined a queue: post the panel, or move it to the bottom, shortly (see think). """
+	if bot.queuegen.is_event_channel(qc.id):   # a QueueGen event has its own message instead of a panel
+		return
 	_state.setdefault(qc.id, dict(sig=None, edited=0, repost=False))["added"] = time.time()
 
 

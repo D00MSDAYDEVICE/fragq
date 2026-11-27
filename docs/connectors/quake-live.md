@@ -225,6 +225,61 @@ database, so it survives restarts. When enforcement is off, nothing changes for 
 
 If FragQ can't be reached, players aren't kept out: the plugin lets them join and tries again later.
 
+## !queueverify
+
+```text
+!queueverify            (or !qv)
+!queueverify dry
+!queueverify status
+```
+
+Checks Red and Blue against the FragQ match this server is playing, and fixes them: players who aren't in the
+PUG are moved to spectator, and PUG players who are spectating take their place. *Contributed by Kr3m.*
+
+- **The match:** the newest current match of the key's queues (`qlx_fragqQueue` if set) that at least half of
+  its players are on this server for. A match still in check-in or draft isn't checked yet. Unranked matches
+  count for 2 hours after they start.
+- **Who is who:** Discord accounts come from Fragdex (`POST /players/lookup`), and FragQ's own Steam links fill
+  the gaps. While Fragdex can't be asked, players without a FragQ link are left
+  alone rather than moved.
+- **Sides:** FragQ's teams are team 1 and team 2, not Red and Blue. A spectating PUG player is put straight on a
+  colour only when every PUG player already on a team agrees which colour is which; otherwise they are told in
+  chat and on screen to join their team, with their teammates' names.
+- **Safe moves:** every move runs on the game thread and checks that the slot still holds the same Steam account.
+  After 1.5 seconds the plugin checks the moves stuck, and reports any another plugin undid.
+
+`!queueverify dry` says what it would change without moving anyone. `!queueverify status` shows the key's queues
+and permissions. If FragQ can't be reached, nothing moves.
+
+It needs the key's **Check linked players** permission, and Fragdex's address and key: `qlx_fragdexUrl` and
+`qlx_fragdexKey`, or the values saved by the Fragdex plugin (`fragdex.py`) on the same server. It works for
+[QueueGen events](../administration/queuegen.md) too, when the event's **Results from** is this server's
+connector.
+
+### !sub and !unsub
+
+```text
+!sub <player id>                     a sub: !queueverify never moves them
+!sub <player id> <player id>         the first player subs for the second, taking their place and team
+!sub                                 list the subs
+!sub off <player id>, !unsub <player id>, !sub clear
+```
+
+Subs belong to one PUG: they are cleared when `!queueverify` finds a new FragQ match. Undoing a sub for a
+named player gives that player their place back.
+
+## !whois
+
+```text
+!whois <player id | Steam ID | Discord user id | Discord username | part of a name>
+```
+
+Shows a player's in-game name, Steam ID (SteamID64 or `STEAM_0:X:Y`), Steam name and linked Discord account, from
+Fragdex. When Fragdex can't be reached, FragQ's own links still say whether a Steam ID is linked. Replies go only
+to whoever asked, with 3 seconds between lookups. *Contributed by Kr3m.*
+
+It shows who is behind a Steam account, so it needs permission level 3 by default (`qlx_fragqWhoisLevel`).
+
 ## Commands
 
 | Command | Permission | What it does |
@@ -239,6 +294,9 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `!fragq url <address>` | 5 | Set the FragQ address |
 | `!fragq key <key>` | 5, console / rcon only | Set the connector key |
 | `!fragq test` | 5 | Check the address and the key |
+| `!queueverify [dry\|status]`, `!qv` | `qlx_fragqQverifyLevel` | [Check and fix the teams](#queueverify) against the FragQ match |
+| `!sub …`, `!unsub <player id>` | `qlx_fragqQverifyLevel` | [Subs](#sub-and-unsub) `!queueverify` leaves alone |
+| `!whois <who>` | `qlx_fragqWhoisLevel` | [Who is behind a player](#whois): Steam and Discord accounts |
 
 ## Cvars
 
@@ -257,6 +315,10 @@ If FragQ can't be reached, players aren't kept out: the plugin lets them join an
 | `qlx_fragqVoice` | `0` | `1` = move players between the queue's Discord voice channels ([voice moves](#voice-moves)) |
 | `qlx_voicemoveperm` | `4` | Permission level for [`!voice`](#moving-players-by-hand) |
 | `qlx_fragqQueue` | | The FragQ queue this server plays, in any case. Sent with voice moves and results ([several servers and queues](#several-servers-and-queues)) |
+| `qlx_fragqQverifyLevel` | `qlx_fragqAdminLevel` | Permission level for `!queueverify` and `!sub` |
+| `qlx_fragqWhoisLevel` | `3` | Permission level for `!whois` |
+| `qlx_fragdexUrl`, `qlx_fragdexKey` | | Fragdex's address and key, for `!queueverify` and `!whois`. Shared with `fragdex.py`, whose saved values take precedence |
+| `qlx_fragdexVerifyTls` | `1` | `0` = accept a self-signed certificate from Fragdex |
 
 ## Troubleshooting
 

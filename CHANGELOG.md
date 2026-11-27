@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.6.0 (2026-11-27)
+
+### New
+
+- **QueueGen** (new page next to Bot status, with a new **Manage events** permission). Schedule a match between
+  two fixed teams on a date of your choice:
+  - **Its own channels:** FragQ creates the event's text channel in an **Events** category, a voice channel per
+    team and a Lobby (one per event, one shared by every event, or one you choose), and a queue only the roster
+    can join. Everyone sees the channels and only the roster and admins type, or they're private. Event channels
+    stay out of the channel list, and are deleted 24 hours after the event ends (or 3 or 7 days, or kept).
+  - **Check-in:** at the start time (or with **Open check-in**) FragQ pings the roster with a message showing
+    who checked in, and reminds the rest every 10 minutes. The match starts with the teams as set once everyone
+    has; a short roster at the start time is flagged instead. A canceled match reopens check-in.
+  - **The match:** a normal FragQ match with the teams' names, voice moves, series, game server results and
+    Slipgate results, per event. Rated events keep their own ratings; unrated ones wait for a player to end the
+    match. Admins swap players before or during the match; players can't sub themselves in.
+  - **Discord event:** each public event gets a Discord scheduled event, *Somewhere Else* at the server's name,
+    titled *◄Team1 vs Team2►*, with the rosters as its description, from the match's start until a day later by
+    default, with one of four FragQ covers (Crosshair, Versus, Arena, Match day). It follows the event: edited
+    with it, started at check-in, completed or canceled with it.
+  - **Tournaments:** events in the same tournament share one rating history, with the tournament's rating
+    system and starting rating; the page shows each tournament's leaderboard.
+  - **Backups** include each server's QueueGen settings and tournaments; event channels are left out.
+- **Quake Live plugin 1.6.0: `!queueverify`, `!sub` and `!whois`**, contributed by Kr3m (thanks!).
+  - **`!queueverify`** (`!qv`) checks Red and Blue against the FragQ match the server is playing and fixes them:
+    non-PUG players to spectator, PUG spectators switched in, and PUG players put on a colour only when their side
+    is certain. `dry` only reports, `status` shows the key's queues and permissions. Discord accounts come from
+    Fragdex, with FragQ's Steam links filling the gaps; every move is checked again on the game thread.
+  - **`!sub` / `!unsub`** mark subs `!queueverify` never moves, or a sub who takes another player's place.
+  - **`!whois`** shows a player's Steam and linked Discord accounts, by player id, Steam ID, Discord id or
+    username, or name. Permission level 3 by default (`qlx_fragqWhoisLevel`).
+  - New connector request **`POST /match`**: the current matches of the key's queues with each player's team,
+    with the key's *Check linked players* permission. Unranked matches are listed for 2 hours after they start.
+
+### Improvements
+
+- The invite link also asks for **Speak** and **Create Events**, for QueueGen. A bot already on your server
+  needs them added to its role, or a new invite.
+
 ## 1.5.0 (2026-11-24)
 
 ### New

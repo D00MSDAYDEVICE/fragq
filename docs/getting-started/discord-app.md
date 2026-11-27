@@ -54,7 +54,7 @@ asks for the right scopes and permissions itself, whatever this tab says. Check 
     | Setting | Value |
     |---|---|
     | Scopes | `bot`, `applications.commands` |
-    | Permissions | Manage Channels, Manage Roles, View Channels, Send Messages, Manage Messages, Embed Links, Attach Files, Read Message History, Add Reactions, Connect, Move Members |
+    | Permissions | Manage Channels, Manage Roles, View Channels, Send Messages, Manage Messages, Embed Links, Attach Files, Read Message History, Add Reactions, Connect, Speak, Move Members, Create Events |
 
     Add **Manage Nicknames** if you'll use *Set ratings to nicks*. [Invite the bot](first-steps.md#2-invite-the-bot)
     says what each permission is for.

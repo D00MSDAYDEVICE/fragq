@@ -43,6 +43,13 @@ Commands:
     !fragq url <url>                 set the FragQ address (permission 5)
     !fragq key <key>                 set the connector key (permission 5, server console / rcon only)
     !fragq test                      check the connection and the key (permission 5)
+    !queueverify [dry|status], !qv   check Red and Blue against the active FragQ match and fix them: non-PUG players
+                                     to spectator, PUG spectators switched in (qlx_fragqQverifyLevel)
+    !sub <player id> [<player id>]   a sub !queueverify never moves, or one who takes the second player's place;
+                                     !sub lists them, !sub off <id> / !unsub <id> removes one, !sub clear all
+                                     (qlx_fragqQverifyLevel)
+    !whois <who>                     a player's Steam ID, Steam name and linked Discord account, by player id, Steam ID,
+                                     Discord id or username, or part of a name (qlx_fragqWhoisLevel); needs Fragdex
 
 Cvars:
     qlx_fragqUrl            FragQ web panel address, e.g. https://fragq.example.com
@@ -61,6 +68,11 @@ Cvars:
                             key's queues). Sent with every voice request and result; a queue name typed after
                             !voice takes precedence. Not case-sensitive. Needed when the key has several
                             queues with voice moves on; set it in server.cfg so a restart keeps it.
+    qlx_fragqQverifyLevel   permission level for !queueverify and !sub (default empty: qlx_fragqAdminLevel)
+    qlx_fragqWhoisLevel     permission level for !whois (default 3)
+    qlx_fragdexUrl          Fragdex address for !queueverify and !whois (shared with fragdex.py, whose saved address
+    qlx_fragdexKey          and key take precedence)
+    qlx_fragdexVerifyTls    0 = accept a self-signed certificate from Fragdex (default 1)
 """
 import collections
 import json
@@ -84,7 +96,7 @@ except ImportError:
     STOP_ALL = ql.RET_STOP_ALL
     RUNTIME = "minqlx"
 
-VERSION = "1.4.0"
+VERSION = "1.6.0"
 DB_URL = "minqlx:fragq:url"
 DB_KEY = "minqlx:fragq:key"
 DB_ENFORCE = "minqlx:fragq:enforce"
@@ -406,7 +418,7 @@ class fragq(ql.Plugin):
         self.set_cvar_once("qlx_voicemoveperm", "4")
         self.set_cvar_once("qlx_fragqQueue", "")
         self.set_cvar_once("qlx_fragqQverifyLevel", "")   # empty: qlx_fragqAdminLevel
-        self.set_cvar_once("qlx_fragqWhoisLevel", "0")
+        self.set_cvar_once("qlx_fragqWhoisLevel", "3")
         # Shared with fragdex.py; set_cvar_once never overwrites a value it has set.
         self.set_cvar_once("qlx_fragdexUrl", "")
         self.set_cvar_once("qlx_fragdexKey", "")
@@ -490,7 +502,7 @@ class fragq(ql.Plugin):
             "enforce": (str(enforce) == "1") if enforce is not None else _int(self.get_cvar("qlx_fragqEnforceLink"), 0) != 0,
             "admin_level": admin_level,
             "qverify_level": _int(self.get_cvar("qlx_fragqQverifyLevel"), admin_level),   # empty: the admin level
-            "whois_level": _int(self.get_cvar("qlx_fragqWhoisLevel"), 0),
+            "whois_level": _int(self.get_cvar("qlx_fragqWhoisLevel"), 3),   # who can see who is behind a Steam account
             # "" in the database: removed with !setdiscord off, don't fall back to the cvar
             "invite": _invite(self.get_cvar("qlx_fragqDiscordInvite")) if invite is None else _invite(invite),
             "verify_tls": _int(self.get_cvar("qlx_fragqVerifyTls"), 1) != 0,
@@ -1720,8 +1732,8 @@ class fragq(ql.Plugin):
             self._reply_lines(reply_to, lines)
             return
 
-        moves, failed, switched = [], [], []
-        out_line = f"{QV_TAG} you're not in the current FragQ PUG, so you were moved to spectator."
+        moves, failed, switched, put_in = [], [], [], []
+        out_line =f"{QV_TAG} you're not in the current FragQ PUG, so you were moved to spectator."
         for out_entry, in_entry in switch:
             team = out_entry[3]
             error = self._qv_switch(out_entry, in_entry)
@@ -1730,7 +1742,10 @@ class fragq(ql.Plugin):
                 switched.append(f"{_colored(in_entry[2])} in for {_colored(out_entry[2])} ({team})")
                 self._qv_tell(out_entry, out_line)
                 self._qv_tell(in_entry, f"{QV_TAG} you're in the FragQ PUG: you were put on {team.capitalize()}.", True)
-            else:
+            elif error == "in_left":   # the PUG player left meanwhile: only the move to spectator happened
+                moves.append((out_entry, "spectator"))
+                self._qv_tell(out_entry, out_line)
+            elif error != "gone":
                 failed.append(f"{_colored(in_entry[2])} <-> {_colored(out_entry[2])} ({error})")
         # Evict the rest before putting anyone in, so a team never holds more than its players.
         for entry in evict:
@@ -1744,6 +1759,7 @@ class fragq(ql.Plugin):
             error = self._qv_put(entry, side)
             if error is None:
                 moves.append((entry, side))
+                put_in.append(f"{_colored(entry[2])} -> {side}")
                 self._qv_tell(entry, f"{QV_TAG} you're in the FragQ PUG: you were put on {side.capitalize()}.", True)
             elif error != "left":
                 failed.append(f"{_colored(entry[2])} ({error})")
@@ -1760,7 +1776,6 @@ class fragq(ql.Plugin):
             self._qv_tell(entry, f"{QV_TAG} you're in the FragQ PUG: {hint} now: /team r or /team b.", True)
 
         out_n = sum(1 for _, t in moves if t == "spectator")
-        put_in = [f"{_colored(e[2])} -> {t}" for e, t in moves[2 * len(switched):] if t != "spectator"]
         lines.append(f"{QV_TAG} moved {out_n} non-PUG player(s) to spectator." +
                      (f" Switched in {len(switched)} PUG member(s): {', '.join(switched)}." if switched else "") +
                      (f" Put {len(put_in)} PUG member(s) on their team: {', '.join(put_in)}." if put_in else ""))
@@ -1791,11 +1806,12 @@ class fragq(ql.Plugin):
 
     def _qv_switch(self, out_entry, in_entry):
         """Swap a non-PUG player on a team with a PUG spectator by client id (game thread): Player.switch puts each
-        in the other's place. None when done, else the error. If one of them left, the other half is a put."""
+        in the other's place. None when done, else the error. If one of them left, the other half is a put:
+        "in_left" when only the non-PUG player was moved (the PUG player left), "gone" when both left."""
         p_out, p_in = self._slot_player(*out_entry[:2]), self._slot_player(*in_entry[:2])
         if p_in is None:
             error = self._qv_put(out_entry, "spectator")
-            return None if error in (None, "left") else error
+            return "in_left" if error is None else "gone" if error == "left" else error
         if p_out is None:
             return self._qv_put(in_entry, out_entry[3])
         try:
@@ -1836,7 +1852,7 @@ class fragq(ql.Plugin):
 
     def cmd_whois(self, player, msg, channel):
         cfg = self._cfg
-        level = cfg.get("whois_level", 0)
+        level = cfg.get("whois_level", 3)
         if level and not self.db.has_permission(player, level):
             player.tell(f"^1FragQ:^7 !whois needs permission level {level}.")
             return STOP_ALL

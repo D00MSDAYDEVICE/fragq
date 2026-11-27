@@ -405,7 +405,7 @@ class QueueChannel:
 		self.guild_id = text_channel.guild.id
 		self.gt = locales[self.cfg.lang]
 		self.rating = self.rating_names[self.cfg.rating_system](
-			channel_id=(self.cfg.rating_channel or text_channel).id,
+			channel_id=self.rating_key,
 			init_rp=self.cfg.rating_initial,
 			init_deviation=self.cfg.rating_deviation,
 			min_deviation=self.cfg.rating_min_deviation,
@@ -417,6 +417,14 @@ class QueueChannel:
 		)
 		self.queues = []
 		self.last_promote = 0
+
+	@property
+	def rating_key(self):
+		"""
+		Where the channel keeps its ratings: a QueueGen tournament's key for an event channel in a tournament
+		(bot.queuegen), else the Rating host channel, else this channel.
+		"""
+		return bot.queuegen.rating_key(self.id) or (self.cfg.rating_channel.id if self.cfg.rating_channel else self.id)
 
 	async def update_info(self, text_channel):
 		self.cfg.cfg_info['channel_name'] = text_channel.name
@@ -457,7 +465,7 @@ class QueueChannel:
 
 	def update_rating_system(self):
 		self.rating = self.rating_names[self.cfg.rating_system](
-			channel_id=(self.cfg.rating_channel or self).id,
+			channel_id=self.rating_key,
 			init_rp=self.cfg.rating_initial,
 			init_deviation=self.cfg.rating_deviation,
 			min_deviation=self.cfg.rating_min_deviation,
@@ -634,6 +642,7 @@ class QueueChannel:
 			raise bot.Exc.PermissionError(self.gt("You are not allowed to add to queues on this channel."))
 		if self.cfg.whitelist_role and self.cfg.whitelist_role not in member.roles:
 			raise bot.Exc.PermissionError(self.gt("You are not allowed to add to queues on this channel."))
+		bot.queuegen.check_member(self, member)   # an event channel: its roster checks in, once it's open
 
 		ban_left, phrase = await bot.noadds.get_user(ctx, member)
 		if ban_left:

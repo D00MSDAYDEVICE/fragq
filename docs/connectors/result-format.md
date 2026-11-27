@@ -18,6 +18,7 @@ Authorization: Bearer fq_...
 | `GET /status` | any | The connector's name, game, queues and permissions. Use it to test the key. `connector.queue_list` gives each of the key's queues with its channel and `voice` (voice moves on), and `connector.other_queues` the Discord server's queues the key doesn't have. |
 | `POST /results` | Send match results | Send one match's result (below) |
 | `POST /players/linked` | Check linked players | `{"steam_ids": ["7656…", …]}` (up to 64): which players have a linked Steam account |
+| `POST /match` | Check linked players | The current matches of the connector's queues, with each player's team ([below](#current-matches)) |
 | `POST /link` | Link Steam accounts from the game | `{"steam_id": "7656…", "name": "in-game name", "discord": "user id or username"}`: ask the member to confirm the link in Discord |
 | `GET /steam/links` | Read linked accounts | Every link of a member of the connector's Discord server ([below](#linked-accounts)) |
 | `POST /voice` | Move players in voice | Move players between a queue's voice channels ([below](#voice-moves)) |
@@ -34,6 +35,37 @@ Answers are JSON. Refused requests have `"ok": false` and an `error` message:
 
 Don't send a `4xx` request again unchanged (except `429`). Do retry when FragQ couldn't be reached or
 answered `5xx`, with the same `match_uid`, so the result is posted once.
+
+## Current matches
+
+`POST /match` lists the FragQ matches a game server can be playing now, so it can check who belongs on its teams
+(the Quake Live plugin's [`!queueverify`](quake-live.md#queueverify)). The body is optional:
+`{"queue": "CA"}` (any case) limits it to one of the connector's queues.
+
+```json
+{
+  "ok": true,
+  "matches": [
+    {
+      "match_id": 1234, "queue": "CA", "state": "waiting_report", "finished": false, "started_at": 1795750000,
+      "team_names": ["Alpha", "Beta"],
+      "players": [
+        {"discord_id": "2000…", "discord_name": "sk1nner", "steam_id": "7656…", "team": 0},
+        {"discord_id": "2000…", "discord_name": "st01c", "steam_id": null, "team": 1}
+      ]
+    }
+  ]
+}
+```
+
+| Field | |
+|---|---|
+| `state` | `check_in`, `draft` or `waiting_report` for a match still in FragQ; `started` for an unranked match from the match history |
+| `finished` | `false` for a match still in FragQ. An unranked match leaves FragQ as soon as its teams are set, so unranked matches that started in the last 2 hours are listed too, with `"finished": true` |
+| `team` | `0` or `1`, FragQ's two teams (not the game's red and blue), or `null` while unpicked |
+| `steam_id` | The player's linked Steam account, or `null` |
+
+Newest first. A queue name the connector doesn't have is refused with `400`.
 
 ## Voice moves
 

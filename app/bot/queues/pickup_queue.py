@@ -554,6 +554,9 @@ class PickupQueue:
 		return "\n".join(lines) or None
 
 	def _match_cfg(self):
+		return bot.queuegen.match_cfg(self, self._own_match_cfg())   # a QueueGen event: its fixed teams
+
+	def _own_match_cfg(self):
 		return dict(
 			team_names=self.cfg.team_names.split(" ") if self.cfg.team_names else None,
 			team_emojis=self.cfg.team_emojis.split(" ") if self.cfg.team_emojis else None,
@@ -608,6 +611,8 @@ class PickupQueue:
 			self.cfg.blacklist_role and self.cfg.blacklist_role in member.roles
 			or self.cfg.whitelist_role and self.cfg.whitelist_role not in member.roles
 		):
+			return bot.Qr.NotAllowed
+		if not bot.queuegen.allowed(self, member):   # a QueueGen event's queue: its roster only
 			return bot.Qr.NotAllowed
 
 		if self.series:

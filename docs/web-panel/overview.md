@@ -9,7 +9,7 @@ have access to (see [Web panel access](../administration/access.md)).
 
 | Area | What is there |
 |---|---|
-| **Top bar** | **Commands** (the [command reference](../reference/commands.md) in this documentation), **Invite bot**, and, depending on your access, **Bot status**, **Users**, [**Connectors**](../connectors/index.md) and **Settings** (with a count when Steam account changes wait for you). On narrow windows the links show as icons, with the name as a tooltip. On the right: the bot's connection status, your account, sign out, and the light/dark theme switch. |
+| **Top bar** | **Commands** (the [command reference](../reference/commands.md) in this documentation), **Invite bot**, and, depending on your access, **Bot status**, [**QueueGen**](../administration/queuegen.md), **Users**, [**Connectors**](../connectors/index.md) and **Settings** (with a count when Steam account changes wait for you). On narrow windows the links show as icons, with the name as a tooltip. On the right: the bot's connection status, your account, sign out, and the light/dark theme switch. |
 | **Server rail** | One button per server you can manage. **Refresh server list** reloads it (after you got access somewhere new); **+** opens the bot invite. |
 | **Channel tree** | The enabled channels of the selected server, with their queues and how full they are. **Add channel** enables the bot on another channel; **Create queue** adds a queue to a channel. The **⋯** menu on a channel or queue has the less common actions. |
 | **Main area** | The page you selected. |

@@ -6,6 +6,11 @@ FragQ is based on [PUBobot2](https://github.com/Leshaka/PUBobot2) © Leshaka. Th
 matches, drafts, ratings, commands and translations) is PUBobot2's work. If you enjoy it, consider
 supporting the original author on [Boosty](https://boosty.to/leshaka).
 
+## Contributors
+
+- **Kr3m**: [`!queueverify`, `!sub` and `!whois`](../connectors/quake-live.md#queueverify) for the Quake Live
+  plugin, and the connector API's `POST /match` (FragQ 1.6.0).
+
 ## License
 
 FragQ is free software, licensed under the **GNU General Public License v3** (`GPL-3.0`), the same

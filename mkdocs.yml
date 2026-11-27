@@ -106,6 +106,7 @@ nav:
       - Settings Page: administration/settings-page.md
       - Steam Integration: administration/steam.md
       - Slipgate: administration/slipgate.md
+      - QueueGen Events: administration/queuegen.md
       - Voice Moves: administration/voice.md
       - .env Reference: administration/env.md
       - HTTPS And Ports: administration/https.md

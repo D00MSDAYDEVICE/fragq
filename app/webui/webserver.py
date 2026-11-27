@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 
 from aiohttp import web
-from nextcord import ChannelType
+from nextcord import ChannelType, DiscordException
 
 import bot
 from core.client import dc
@@ -55,7 +55,8 @@ def is_owner(uid: int) -> bool:
 
 
 def guild_channels(guild):
-	return [qc for qc in bot.queue_channels.values() if qc.guild_id == guild.id]
+	""" The server's queue channels, without the channels QueueGen generated for its events (QueueGen page). """
+	return [qc for qc in bot.queue_channels.values() if qc.guild_id == guild.id and not bot.queuegen.is_event_channel(qc.id)]
 
 
 def get_access(request, guild):
@@ -248,6 +249,7 @@ async def api_me(request):
 			owner=is_owner(int(user["id"])),
 			manage_users=any(get_access(request, g).can_manage_users() for g in dc.guilds),
 			manage_connectors=any(get_access(request, g).has("manage_connectors") for g in dc.guilds),
+			manage_events=any(get_access(request, g).has("manage_events") for g in dc.guilds),
 			steam_review=steam_scope(request) is not False,
 			steam_pending=len(reviewable_requests(request)),
 		),
@@ -610,6 +612,7 @@ async def api_guilds(request):
 			id=str(guild.id), name=guild.name, icon=icon_url(guild),
 			admin=acc.admin, perms=perm_list(acc.server), manage_users=acc.can_manage_users(),
 			manage_connectors=acc.has("manage_connectors"),
+			manage_events=acc.has("manage_events"),
 			channels=sum(1 for qc in guild_channels(guild) if acc.visible(qc.id)),
 		))
 	return web.json_response(dict(guilds=guilds))
@@ -1019,6 +1022,219 @@ async def download_plugin(request):
 		raise web.HTTPNotFound()
 	return web.FileResponse(path, headers={"Content-Type": "text/x-python; charset=utf-8",
 										   "Content-Disposition": 'attachment; filename="fragq.py"'})
+
+
+# ------------------------------------------------------------------ api: QueueGen (scheduled events, bot/queuegen.py)
+
+def _events_guild(request):
+	guild, acc = get_guild(request)
+	need(acc, "manage_events")
+	return guild, acc
+
+
+def _get_event(request, guild):
+	try:
+		ev = bot.queuegen.events.get(int(request.match_info["event_id"]))
+	except ValueError:
+		ev = None
+	if ev is None or ev["guild_id"] != guild.id:
+		raise _http(web.HTTPNotFound, "Event not found.")
+	return ev
+
+
+def _person(guild, uid):
+	m = guild.get_member(uid) or dc.get_user(uid)
+	link = bot.steam.get_link(uid) or {}
+	return dict(id=str(uid), name=get_nick(m) if m else str(uid), avatar=str(m.display_avatar.with_size(64)) if m else None,
+				steam_id=str(link["steam_id"]) if link.get("steam_id") else None, member=guild.get_member(uid) is not None)
+
+
+def event_dict(guild, ev):
+	qg = bot.queuegen
+	d = ev["data"]
+	q = qg._queue(ev)
+	text = guild.get_channel(d.get("channel_id")) if d.get("channel_id") else None
+	voice = d.get("voice") or {}
+	hours = d.get("cleanup_hours")
+	return dict(
+		id=ev["id"], state=ev["state"], start_at=ev["start_at"], name=d.get("name"), team_names=d.get("team_names"),
+		team_size=d.get("team_size"), roster=[[str(u) for u in t] for t in d.get("roster") or [[], []]],
+		people={str(u): _person(guild, u) for u in qg.roster_ids(ev)},
+		checked_in=[str(m.id) for m in q.queue] if q else [],
+		server=d.get("server") or "", description=d.get("description") or "", series_length=d.get("series_length") or 1,
+		slipgate_results=bool(d.get("slipgate_results")), rated=bool(d.get("rated")), private=bool(d.get("private")),
+		connector_id=str(d["connector_id"]) if d.get("connector_id") else "", cleanup_hours=hours,
+		channel=dict(id=str(text.id), name=text.name) if text else None,
+		voice=[dict(id=str(c.id), name=c.name) for c in (guild.get_channel(voice.get(k)) for k in ("lobby", "team1", "team2")) if c],
+		match_id=d.get("match_id"), result=d.get("result"),
+		discord_event=d.get("discord_event", True), auto_open=d.get("auto_open", True), duration_minutes=d.get("duration_minutes") or qg.DEFAULT_DURATION, cover=d.get("cover", qg.COVERS[0][0]),
+		discord_title=qg.discord_event_title(ev), tournament_id=str(d["tournament_id"]) if d.get("tournament_id") else "",
+		tournament=(qg.tournament_of(ev) or {}).get("name") or ("deleted tournament" if d.get("tournament_id") else None),
+		discord_event_url=qg.discord_event_url(guild.id, d["discord_event_id"]) if d.get("discord_event_id") else None,
+		discord_event_error=d.get("discord_event_error"), start_notice=bool(d.get("start_notice")),
+		created_by=ev.get("created_by_name"), created_at=ev.get("created_at"), ended_at=ev.get("ended_at"),
+		delete_at=(ev["ended_at"] + hours * 3600) if ev.get("ended_at") and hours and ev["state"] != "archived" else None,
+	)
+
+
+def _event_error(e):
+	if isinstance(e, bot.queuegen.FieldError):
+		return jerror(400, str(e), fields={e.field: str(e)})
+	return jerror(409, str(e))
+
+
+async def api_queuegen(request):
+	guild, acc = _events_guild(request)
+	s = bot.queuegen.settings(guild.id)
+	servers = []
+	for qc in guild_channels(guild):
+		channel = guild.get_channel(qc.id)
+		for row in qc.cfg.servers or []:
+			servers.append(dict(address=row["address"], label=row.get("label") or "", channel=channel.name if channel else str(qc.id)))
+	linked = [_person(guild, uid) for uid in bot.steam.links if guild.get_member(uid)]
+	linked.sort(key=lambda p: p["name"].casefold())
+	busy = {str(p.id) for m in bot.active_matches for p in m.players}
+	return web.json_response(dict(
+		settings=dict(category_id=str(s["category_id"]) if s["category_id"] else "",
+					  organizer_role_id=str(s["organizer_role_id"]) if s["organizer_role_id"] else "",
+					  lobby_mode=s["lobby_mode"], lobby_id=str(s["lobby_id"]) if s["lobby_id"] else "",
+					  lobby_generated=bool(s.get("lobby_generated")), cleanup_hours=s["cleanup_hours"]),
+		events=[event_dict(guild, ev) for ev in bot.queuegen.guild_events(guild.id)],
+		tournaments=[await tournament_dict(guild, t) for t in bot.queuegen.guild_tournaments(guild.id)],
+		rating_systems=list(bot.QueueChannel.rating_names), rating_defaults=bot.queuegen.RATING_DEFAULTS,
+		linked=[dict(p, in_match=p["id"] in busy) for p in linked],
+		servers=servers,
+		connectors=[dict(id=str(c["id"]), name=c["name"]) for c in bot.connectors.guild_connectors(guild.id) if c["can_results"]],
+		voice_channels=[dict(id=str(c.id), name=c.name) for c in guild.voice_channels],
+		categories=[dict(id=str(c.id), name=c.name) for c in guild.channels if getattr(c, "type", None) == ChannelType.category],
+		roles=[dict(id=str(r.id), name=r.name) for r in guild.roles if not r.is_default() and not r.managed],
+		missing_permissions=bot.queuegen.missing_permissions(guild),
+		max_team=bot.queuegen.MAX_TEAM, cleanup_choices=list(bot.queuegen.CLEANUP_CHOICES),
+		durations=list(bot.queuegen.DURATIONS), default_duration=bot.queuegen.DEFAULT_DURATION,
+		covers=[dict(id=c, label=label, url=f"/static/covers/{c}.png") for c, label in bot.queuegen.COVERS],
+		can_create_events=bot.queuegen.can_create_events(guild),
+	))
+
+
+async def api_queuegen_settings(request):
+	guild, acc = _events_guild(request)
+	body = await read_json(request)
+	try:
+		await bot.queuegen.save_settings(guild, body)
+	except bot.queuegen.FieldError as e:
+		return _event_error(e)
+	log.info(f"WEBUI| {request['user']['name']} changed the QueueGen settings on {guild.name}.")
+	return web.json_response(dict(ok=True))
+
+
+async def api_event_create(request):
+	guild, acc = _events_guild(request)
+	body = await read_json(request)
+	try:
+		ev = await bot.queuegen.create(guild, body, acc.uid, request["user"]["name"][:191])
+	except (bot.queuegen.FieldError, bot.Exc.PubobotException) as e:
+		return _event_error(e)
+	except DiscordException as e:
+		return jerror(403, f"Discord refused to create the event's channels: {e}")
+	log.info(f"WEBUI| {request['user']['name']} created the event '{ev['data']['name']}' (#{ev['id']}) on {guild.name}.")
+	return web.json_response(dict(event=event_dict(guild, ev)), status=201)
+
+
+async def _event_action(request, action, *args, verb):
+	guild, acc = _events_guild(request)
+	ev = _get_event(request, guild)
+	try:
+		await action(guild, ev, *args)
+	except (bot.queuegen.FieldError, bot.Exc.PubobotException) as e:
+		return _event_error(e)
+	except DiscordException as e:
+		return jerror(403, f"Discord refused: {e}")
+	log.info(f"WEBUI| {request['user']['name']} {verb} the event '{ev['data']['name']}' (#{ev['id']}) on {guild.name}.")
+	return web.json_response(dict(event=event_dict(guild, ev)))
+
+
+async def api_event_update(request):
+	return await _event_action(request, bot.queuegen.update, await read_json(request), verb="edited")
+
+
+async def api_event_open(request):
+	return await _event_action(request, bot.queuegen.open_now, verb="opened check-in for")
+
+
+async def api_event_cancel(request):
+	return await _event_action(request, bot.queuegen.cancel, verb="cancelled")
+
+
+async def api_event_swap(request):
+	body = await read_json(request)
+	return await _event_action(request, bot.queuegen.swap, body.get("out"), body.get("in"), verb="swapped a player of")
+
+
+async def api_event_delete(request):
+	guild, acc = _events_guild(request)
+	ev = _get_event(request, guild)
+	await bot.queuegen.delete(guild, ev)
+	log.info(f"WEBUI| {request['user']['name']} deleted the event '{ev['data']['name']}' (#{ev['id']}) on {guild.name}.")
+	return web.json_response(dict(ok=True))
+
+
+async def tournament_dict(guild, t):
+	qg = bot.queuegen
+	summary = await qg.tournament_summary(t)
+	return dict(
+		id=t["id"], name=t["name"], rating_system=t["rating_system"], rating_initial=t["rating_initial"],
+		rating_deviation=t["rating_deviation"], created_by=t.get("created_by_name"), created_at=t.get("created_at"),
+		events=[dict(id=e["id"], name=e["data"]["name"], state=e["state"], start_at=e["start_at"])
+				for e in qg.guild_events(guild.id) if e["data"].get("tournament_id") == t["id"]],
+		players=summary["players"], matches=summary["matches"],
+		leaderboard=[dict(user_id=str(r["user_id"]), name=get_nick(m) if (m := guild.get_member(r["user_id"])) else r.get("nick") or str(r["user_id"]),
+						  rating=r["rating"], wins=r.get("wins") or 0, losses=r.get("losses") or 0, draws=r.get("draws") or 0)
+					 for r in summary["leaderboard"]],
+	)
+
+
+def _get_tournament(request, guild):
+	try:
+		t = bot.queuegen.tournaments.get(int(request.match_info["tournament_id"]))
+	except ValueError:
+		t = None
+	if t is None or t["guild_id"] != guild.id:
+		raise _http(web.HTTPNotFound, "Tournament not found.")
+	return t
+
+
+async def api_tournament_create(request):
+	guild, acc = _events_guild(request)
+	body = await read_json(request)
+	try:
+		t = await bot.queuegen.create_tournament(guild, body, request["user"]["name"][:191])
+	except bot.queuegen.FieldError as e:
+		return _event_error(e)
+	log.info(f"WEBUI| {request['user']['name']} created the tournament '{t['name']}' on {guild.name}.")
+	return web.json_response(dict(tournament=await tournament_dict(guild, t)), status=201)
+
+
+async def api_tournament_update(request):
+	guild, acc = _events_guild(request)
+	t = _get_tournament(request, guild)
+	body = await read_json(request)
+	try:
+		await bot.queuegen.update_tournament(guild, t, body)
+	except (bot.queuegen.FieldError, bot.Exc.PubobotException) as e:
+		return _event_error(e)
+	log.info(f"WEBUI| {request['user']['name']} edited the tournament '{t['name']}' on {guild.name}.")
+	return web.json_response(dict(tournament=await tournament_dict(guild, t)))
+
+
+async def api_tournament_delete(request):
+	guild, acc = _events_guild(request)
+	t = _get_tournament(request, guild)
+	try:
+		await bot.queuegen.delete_tournament(t)
+	except bot.Exc.PubobotException as e:
+		return _event_error(e)
+	log.info(f"WEBUI| {request['user']['name']} deleted the tournament '{t['name']}' on {guild.name}.")
+	return web.json_response(dict(ok=True))
 
 
 # ------------------------------------------------------------------ api: queue channels
@@ -1485,6 +1701,19 @@ def make_app():
 	r.add_get("/api/channels/{channel_id}/queues/{queue_id}/export", api_queue_export)
 	r.add_post("/api/channels/{channel_id}/queues/{queue_id}/duplicate", api_queue_duplicate)
 
+	r.add_get("/queuegen", index)
+	r.add_get("/queuegen/{tail:.*}", index)
+	r.add_get("/api/guilds/{guild_id}/queuegen", api_queuegen)
+	r.add_put("/api/guilds/{guild_id}/queuegen/settings", api_queuegen_settings)
+	r.add_post("/api/guilds/{guild_id}/events", api_event_create)
+	r.add_put("/api/guilds/{guild_id}/events/{event_id}", api_event_update)
+	r.add_delete("/api/guilds/{guild_id}/events/{event_id}", api_event_delete)
+	r.add_post("/api/guilds/{guild_id}/events/{event_id}/open", api_event_open)
+	r.add_post("/api/guilds/{guild_id}/events/{event_id}/cancel", api_event_cancel)
+	r.add_post("/api/guilds/{guild_id}/events/{event_id}/swap", api_event_swap)
+	r.add_post("/api/guilds/{guild_id}/tournaments", api_tournament_create)
+	r.add_put("/api/guilds/{guild_id}/tournaments/{tournament_id}", api_tournament_update)
+	r.add_delete("/api/guilds/{guild_id}/tournaments/{tournament_id}", api_tournament_delete)
 	r.add_get("/connectors", index)
 	r.add_get("/connectors/{tail:.*}", index)
 	r.add_get("/api/guilds/{guild_id}/connectors", api_connectors)

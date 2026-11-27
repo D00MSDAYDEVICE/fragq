@@ -128,6 +128,8 @@ class Draft:
 	async def sub_for(self, ctx, player1, player2, force=False):
 		if self.m.state not in [self.m.CHECK_IN, self.m.DRAFT, self.m.WAITING_REPORT]:
 			raise bot.Exc.MatchStateError(self.m.gt("The match must be on the check-in, draft or waiting report stage."))
+		elif not force and bot.queuegen.is_event_queue(self.m.queue):
+			raise bot.Exc.PermissionError(self.m.gt("Only admins can swap players in an event match (QueueGen page)."))
 		elif not force and player1 not in self.sub_queue:
 			raise bot.Exc.PermissionError(self.m.gt("Specified player is not looking for a substitute."))
 
