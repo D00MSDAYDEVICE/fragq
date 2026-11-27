@@ -268,6 +268,11 @@ async def _steam(ctx: MessageContext, args: str = None):
 	await bot.commands.steam(ctx, steam=args.strip() if args else None)
 
 
+@message_command('checkmatch', 'cm')
+async def _checkmatch(ctx: MessageContext, args: str = None):
+	await bot.live.check(ctx, target=args)
+
+
 @message_command('slipgate', 'sg')
 async def _slipgate(ctx: MessageContext, args: str = None):
 	member = await ctx.get_member(args) if args else None

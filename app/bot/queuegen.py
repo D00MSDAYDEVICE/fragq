@@ -1133,6 +1133,9 @@ def _embed(guild, ev):
 		e.add_field(name=d["team_names"][i], value="\n".join(lines) or "—", inline=True)
 	if d.get("discord_event_id") and ev["state"] in ("scheduled", "open"):
 		e.add_field(name="Discord event", value=f"[Interested? Get a reminder]({discord_event_url(guild.id, d['discord_event_id'])})", inline=False)
+	live = bot.live.summary(d["match_id"]) if ev["state"] == "live" and d.get("match_id") else None
+	if live:   # from the game server (bot.live); !checkmatch has every player's stats
+		e.add_field(name="Live", value=live[:1024], inline=False)
 	e.set_footer(text=_status_line(ev, q))
 	return e
 
@@ -1143,7 +1146,7 @@ def _status_line(ev, q):
 		n = len(q.queue) if q else 0
 		return f"Check-in: {n}/{d['team_size'] * 2}. ✅ checked in · ⌛ waiting · 🎮 still in another match"
 	if ev["state"] == "live":
-		return f"Match #{d.get('match_id')} is on."
+		return f"Match #{d.get('match_id')} is on. /checkmatch shows how it stands."
 	if ev["state"] == "finished":
 		r = d.get("result") or {}
 		return f"Finished: {r.get('text') or 'reported'}."
@@ -1164,7 +1167,8 @@ def _view(ev):
 def _signature(ev):
 	q = _queue(ev)
 	return (ev["state"], tuple(m.id for m in q.queue) if q else (), json.dumps(ev["data"]["roster"]), ev["data"].get("match_id"),
-			tuple(sorted(p.id for m in bot.active_matches for p in m.players)) if ev["state"] == "open" else ())
+			tuple(sorted(p.id for m in bot.active_matches for p in m.players)) if ev["state"] == "open" else (),
+			bot.live.summary(ev["data"]["match_id"]) if ev["state"] == "live" and ev["data"].get("match_id") else None)
 
 
 async def _refresh(guild, ev):

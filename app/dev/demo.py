@@ -87,6 +87,11 @@ def _forbidden():
 	return Forbidden(SimpleNamespace(status=403, reason="Forbidden"), {"code": 50013, "message": "Missing Permissions"})
 
 
+def _no_access():
+	""" Discord's answer in a channel the bot can't see. """
+	return Forbidden(SimpleNamespace(status=403, reason="Forbidden"), {"code": 50001, "message": "Missing Access"})
+
+
 def _check_overwrites(guild, overwrites):
 	""" Like Discord: a bot can't allow or deny in a channel a permission it doesn't have itself (50013). """
 	p = guild.me.guild_permissions
@@ -220,6 +225,8 @@ class Message:
 		return [Embed.from_dict(e) for e in self.data.get("embeds") or []]
 
 	async def edit(self, content=KEEP, embed=None, view=None, file=None, attachments=None, **kwargs):
+		if getattr(self.channel, "no_access", False):
+			raise _no_access()
 		if self not in self.channel.messages:  # like Discord: editing a deleted / unknown message fails
 			raise _not_found()
 		eph = self.data.get("ephemeral_to")
@@ -248,6 +255,7 @@ class TextChannel(Editable):
 		self.guild, self.id, self.name, self.category, self.position = guild, cid, name, category, position
 		self.messages = []
 		self.topic, self.overwrites = None, {}
+		self.no_access = False  # /dev/channel-access: the bot can't see the channel (Discord's 50001)
 
 	@property
 	def mention(self):
@@ -268,11 +276,15 @@ class TextChannel(Editable):
 		return max((m.id for m in self.messages if not m.data.get("ephemeral_to")), default=None)
 
 	async def fetch_message(self, mid):
+		if self.no_access:
+			raise _no_access()
 		if (msg := next((m for m in self.messages if m.id == mid), None)) is None:
 			raise _not_found()
 		return msg
 
 	async def send(self, content=None, embed=None, view=None, file=None, **kwargs):
+		if self.no_access:
+			raise _no_access()
 		msg = Message(self, _render(content, embed, view))
 		msg.data["attachments"] = _attachment(file)
 		self.messages.append(msg)
@@ -653,6 +665,12 @@ async def dev_state(request):
 	))
 
 
+async def dev_checkmatch_choices(request):
+	""" What /checkmatch's match option suggests in a channel: ?channel_id=&typed= """
+	qc = bot.queue_channels.get(int(request.query.get("channel_id", 0)))
+	return web.json_response(dict(choices=bot.live.choices(qc, request.query.get("typed", "")) if qc else []))
+
+
 async def dev_bot_perms(request):
 	"""
 	The bot's server permissions on the first server: {"admin": true} (the default), or {"admin": false, "deny": [...]}
@@ -670,6 +688,14 @@ async def dev_bot_perms(request):
 			else:
 				setattr(p, name, False)
 	g.me.guild_permissions = p
+	return web.json_response(dict(ok=True))
+
+
+async def dev_channel_access(request):
+	""" {"channel_id": ..., "access": false}: the bot loses (or gets back) access to a text channel, as when its View Channel is removed. """
+	body = await request.json()
+	channel = next(c for g in GUILDS for c in g.text_channels if c.id == int(body["channel_id"]))
+	channel.no_access = not body.get("access", True)
 	return web.json_response(dict(ok=True))
 
 
@@ -762,6 +788,8 @@ async def main():
 	app.router.add_post("/dev/say", dev_say)
 	app.router.add_post("/dev/voice", dev_voice)
 	app.router.add_post("/dev/bot-perms", dev_bot_perms)
+	app.router.add_post("/dev/channel-access", dev_channel_access)
+	app.router.add_get("/dev/checkmatch-choices", dev_checkmatch_choices)
 	app.router.add_get("/dev/dms", dev_dms)
 	app.router.add_post("/dev/dm-press", dev_dm_press)
 	runner = web.AppRunner(app, access_log=None)

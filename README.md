@@ -79,7 +79,7 @@ After that:
 2. Use **Invite bot** to add the bot to your server.
 3. Pick the server in the left rail, choose **Add channel**, then **Create queue**.
 
-You can also type `!enable_pubobot` in a text channel, as with PUBobot2.
+You can also type `!enable_fragq` in a text channel, or use `/channel enable`.
 
 ## Who can use the panel
 

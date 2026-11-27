@@ -40,6 +40,7 @@ Joining is refused while the channel is [paused](../queue-panel/moderators.md#pa
 | `!subfor <player>` | `/subfor` | everyone | Take the place of a player who asked for a substitute |
 | `!teams` | `/teams` | players | Show your match's teams |
 | `!matches` | `/matches` | everyone | Matches in progress |
+| `!checkmatch`, `!cm` `[match \| queue \| event]` | `/checkmatch` | everyone | **FragQ** Live status of the matches in progress here and of running [QueueGen](../administration/queuegen.md) events: score, round, map and every player's stats when the game server [sends live status](../connectors/result-format.md#live-status), otherwise the teams and how long ago the match started. `/checkmatch` suggests the channel's queues and matches and the running events. One reply each time, 5 seconds apart per channel |
 | `!report_loss`, `!rl` | `/report loss` | captains | Report that your team lost |
 | `!report_draw`, `!rd` | `/report draw` | captains | Offer or accept a draw |
 | `!report_cancel`, `!rc` | `/report abort` | captains | Offer or accept cancelling the match |
@@ -92,8 +93,8 @@ The queue panel's **Pause queue** button has no chat command; see
 
 | Chat | Slash | Who | What it does |
 |---|---|---|---|
-| `!enable_pubobot` | `/channel enable` | Discord Administrator | Enable the bot on this channel |
-| `!disable_pubobot` | `/channel disable` | Discord Administrator | Disable the bot on this channel |
+| `!enable_fragq` | `/channel enable` | Discord Administrator | Enable the bot on this channel |
+| `!disable_fragq` | `/channel disable` | Discord Administrator | Disable the bot on this channel |
 | | `/channel delete` | Discord Administrator | Disable the bot and delete the channel's stats and configs |
 | | `/channel show` | everyone | List the channel settings |
 | | `/channel set <variable> <value>` | Admin | Change a [channel setting](channel-settings.md) |

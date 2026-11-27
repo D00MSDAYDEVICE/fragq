@@ -19,6 +19,7 @@ Authorization: Bearer fq_...
 | `POST /results` | Send match results | Send one match's result (below) |
 | `POST /players/linked` | Check linked players | `{"steam_ids": ["7656…", …]}` (up to 64): which players have a linked Steam account |
 | `POST /match` | Check linked players | The current matches of the connector's queues, with each player's team ([below](#current-matches)) |
+| `POST /live` | Send match results | The live status of a game in progress, for `!checkmatch` ([below](#live-status)) |
 | `POST /link` | Link Steam accounts from the game | `{"steam_id": "7656…", "name": "in-game name", "discord": "user id or username"}`: ask the member to confirm the link in Discord |
 | `GET /steam/links` | Read linked accounts | Every link of a member of the connector's Discord server ([below](#linked-accounts)) |
 | `POST /voice` | Move players in voice | Move players between a queue's voice channels ([below](#voice-moves)) |
@@ -66,6 +67,48 @@ answered `5xx`, with the same `match_uid`, so the result is posted once.
 | `steam_id` | The player's linked Steam account, or `null` |
 
 Newest first. A queue name the connector doesn't have is refused with `400`.
+
+## Live status
+
+`POST /live` tells FragQ how a game in progress stands, so `!checkmatch` / `/checkmatch` can show it in Discord.
+It works for any game: the fields are the same kind as a result's, and what a game puts in `period`, `stats` and
+`note` is up to it. Send it when something changes (a round ends, the score changes, a team changes) and every
+minute or so while the game runs, at most every few seconds.
+
+```json
+{
+  "version": 1,
+  "match_uid": "6f1c0a52-…",
+  "state": "live",
+  "map": "campgrounds", "mode": "CA", "server": "CA #1",
+  "elapsed": 412,
+  "period": {"label": "Round", "current": 7, "limit": 10},
+  "teams": [{"name": "Red", "score": 4}, {"name": "Blue", "score": 2}],
+  "players": [
+    {"id": "76561198000000001", "name": "st01c", "team": "Red", "alive": true, "stats": {"K": 12, "D": 4, "Dmg": 2345}}
+  ],
+  "table": ["K", "D", "Dmg"],
+  "note": "Blue is down to one player"
+}
+```
+
+| Field | |
+|---|---|
+| `state` | `warmup`, `countdown`, `live`, `overtime`, `intermission` or `ended` |
+| `elapsed` | Seconds since the game started |
+| `period` | Where the game is: `{"label": "Round", "current": 7, "limit": 10}`, `{"label": "Half", "current": 2}`, `{"label": "Map", "current": 2, "limit": 3}`… |
+| `teams`, `players`, `table` | As in a [result](#a-result): players by Steam ID, Discord id or name, each with free-form `stats` (up to 24) and the columns to show in `table` (up to 8). `alive: false` shows 💀 |
+| `match_uid`, `fragq_match_id`, `queue` | Find the FragQ match, as for a result. Send the same `match_uid` with the final result: the result then replaces the live status |
+| `note`, `server` | Free text, shown with the status |
+
+Only `version` and one of `state`, `teams` or `players` are needed. FragQ keeps the latest status of each match in
+memory: it shows as stale after 3 minutes without an update and is forgotten after 15. The answer says
+`"status": "matched"` with the FragQ `match_id`, or `"unmatched"`; an unmatched game still shows in `!checkmatch`
+in the channels of the connector's queues, as *not linked to a FragQ match*.
+
+Besides `!checkmatch`, the live status shows on the web panel's [Live tab](../web-panel/live-and-stats.md#live), on a
+[QueueGen](../administration/queuegen.md) event's message and card, and the **Connectors** page marks a connector
+that sends it with **Live status** and its last update.
 
 ## Voice moves
 

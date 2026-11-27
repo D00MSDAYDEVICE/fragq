@@ -94,6 +94,11 @@ results from the game server.
 - **Unrated** events: any player of the match ends it with `/report`.
 - A **canceled** match (`!cancel_match`, or no report within the match lifetime) puts the event back to check-in.
 
+While the match runs, a game server that sends [live status](../connectors/result-format.md#live-status) (the Quake
+Live plugin does, from 1.7.0, when the event's **Results from** is its connector) keeps the event message's **Live**
+field up to date with the state, round and score, and the event's card on the QueueGen page shows every player's
+stats. [`/checkmatch`](../reference/commands.md#matches) shows the same in Discord.
+
 When the match (or series) is over, FragQ posts the result in the channel and the event is **finished**.
 
 ### Swap a player

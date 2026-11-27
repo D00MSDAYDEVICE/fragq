@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.7.0 (2026-11-27)
+
+### New
+
+- **`!checkmatch` / `!cm` and `/checkmatch`**: the live status of the matches in progress in the channel, and of
+  running QueueGen events, for everyone. With a game server that sends live status: state, round or period, clock,
+  map and mode, the score, and every player's stats under their team (with their Discord names). Without one: the
+  teams, the stage and how long ago the match started, with a note that no live data comes in. Name a match number,
+  queue or event to show just that one; `/checkmatch` suggests them. One reply each time.
+- **Connector request `POST /live`** (with the key's *Send match results* permission): a game-neutral live status,
+  in the same terms as a result (teams and scores, players with free-form stats, map, mode, plus state, elapsed
+  time and a period such as *Round 7 of 10*), so any game's server or tool can feed `!checkmatch`. The final result
+  replaces it.
+- **Quake Live plugin 1.7.0: live status.** While a match runs, the plugin sends FragQ its state, map, mode, clock,
+  round (or minute of the time limit), team scores and every player's score, kills, deaths and damage: at the
+  countdown, the start, every round end and team change, every 30 seconds, and the final score at the end
+  (*Match aborted* after an abort). On by default, `qlx_fragqLive 0` turns it off; `!fragq` shows the last update.
+  A FragQ without live status, or a key without *Send match results*, stops it until the next map.
+- **Live status in the web panel and on QueueGen events.** Match cards on the **Live** tab and the server overview
+  show the live status when there is one: state, round, clock, map, score and a stats table per team. Unranked
+  matches stay on the Live tab while their game server reports. QueueGen event messages get a **Live** field with
+  the state, round and score (edited only when those change), and event cards show the full status. The
+  **Connectors** page marks connectors that send live status, with their last update.
+
+### Improvements
+
+- **QueueGen: a progress bar while an event is created or saved.** Creating the channels and the Discord event
+  takes a few seconds; the form now shows what it's doing, with a bar timed on how long the last save took.
+- **`!enable_pubobot` and `!disable_pubobot` are now `!enable_fragq` and `!disable_fragq`.** `/channel enable`,
+  `/channel disable`, the web panel's **Add channel** and **Disable bot on channel** are unchanged.
+
+### Fixes
+
+- **A queue channel the bot can no longer see** (*403 Forbidden, 50001 Missing Access*, for example after its
+  View Channel was removed) no longer fills the log with tracebacks. Expired players are still removed, the
+  other background jobs (no-adds, auto ready, series, stats) keep running instead of being skipped, and FragQ logs
+  it once per channel every 10 minutes: what it couldn't do and where, and a yellow line (the new **WARN** level)
+  with the permissions to check in the channel or its category: View Channel, Send Messages, Embed Links, Attach
+  Files and Read Message History. It posts there again as soon as it has access. Discord shows such channels to
+  the bot as `#___hidden___`; *Troubleshooting* in the docs covers it.
+
 ## 1.6.0 (2026-11-27)
 
 ### New

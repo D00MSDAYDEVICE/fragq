@@ -875,6 +875,7 @@ def connector_dict(c, counts=None):
 		can_results=c["can_results"], can_check=c["can_check"], can_link=c["can_link"], can_export=c["can_export"], can_voice=c["can_voice"],
 		slipgate_details=c["slipgate_details"], allowed_ips=c["allowed_ips"].split() if c["allowed_ips"] else [], rate_limit=c["rate_limit"], expires_at=c["expires_at"],
 		disabled=c["disabled"], requests=c["requests"], last_used_at=c["last_used_at"], last_used_ip=c["last_used_ip"],
+		live_at=int(bot.live.last_seen(c["id"])) if bot.live.last_seen(c["id"]) else None,   # its last live status, since FragQ started
 		last_denied_at=c["last_denied_at"], last_denied_ip=c["last_denied_ip"], last_denied_reason=c["last_denied_reason"],
 		created_at=c["created_at"], created_by=c["created_by_name"], results=n, last_result_at=last,
 	)
@@ -1016,6 +1017,10 @@ async def connect_match(c, body):
 	return await bot.connectors.active_matches(c, body)
 
 
+async def connect_live(c, body):
+	return await bot.live.receive(c, body)
+
+
 async def download_plugin(request):
 	path = os.path.join(PLUGINS, "minqlx", "fragq.py")
 	if request.match_info["name"] != "fragq.py" or not os.path.isfile(path):
@@ -1072,6 +1077,7 @@ def event_dict(guild, ev):
 		tournament=(qg.tournament_of(ev) or {}).get("name") or ("deleted tournament" if d.get("tournament_id") else None),
 		discord_event_url=qg.discord_event_url(guild.id, d["discord_event_id"]) if d.get("discord_event_id") else None,
 		discord_event_error=d.get("discord_event_error"), start_notice=bool(d.get("start_notice")),
+		live=bot.live.web_dict(d["match_id"], guild) if ev["state"] == "live" and d.get("match_id") else None,
 		created_by=ev.get("created_by_name"), created_at=ev.get("created_at"), ended_at=ev.get("ended_at"),
 		delete_at=(ev["ended_at"] + hours * 3600) if ev.get("ended_at") and hours and ev["state"] != "archived" else None,
 	)
@@ -1408,9 +1414,22 @@ async def api_queue_pause(request):
 
 async def api_channel_live(request):
 	qc, guild, acc = get_qc(request)
+	matches = [match_dict(m) for m in bot.active_matches if m.qc is qc]
+	active = {m["id"] for m in matches}
+	# unranked matches leave FragQ when they start: shown here while their game server sends live status
+	for m in await bot.live.candidates(qc):
+		live = bot.live.web_dict(m["match_id"], guild) if m["match_id"] not in active and m["qc"] is qc else None
+		if live:
+			matches.append(dict(
+				id=m["match_id"], queue=m["queue"], channel=str(qc.id), state="in progress", ranked=False, held_until=None,
+				started=m["started"], maps=[], live=live,
+				teams=[dict(name=m["team_names"][i], emoji=None, players=[
+					dict(name=get_nick(guild.get_member(uid)) if guild.get_member(uid) else str(uid)) for uid in m["teams"][i]])
+					for i in (0, 1)],
+			))
 	return web.json_response(dict(
 		queues=[dict(queue_dict(q), who=[member_dict(m) for m in q.queue]) for q in qc.queues],
-		matches=[match_dict(m) for m in bot.active_matches if m.qc is qc],
+		matches=matches,
 	))
 
 
@@ -1431,6 +1450,7 @@ def match_dict(m):
 			dict(name=t.name, emoji=t.emoji, players=[member_dict(p) for p in t])
 			for t in m.teams if t.idx >= 0 or len(t)
 		],
+		live=bot.live.web_dict(m.id, dc.get_guild(m.qc.guild_id)),   # from the game server (POST /live), or None
 	)
 
 
@@ -1730,6 +1750,7 @@ def make_app():
 	r.add_get(CONNECT + "/steam/links", connect_api(connect_steam_links, "can_export"))
 	r.add_post(CONNECT + "/voice", connect_api(connect_voice, "can_voice"))
 	r.add_post(CONNECT + "/match", connect_api(connect_match, "can_check"))
+	r.add_post(CONNECT + "/live", connect_api(connect_live, "can_results"))
 	r.add_get("/downloads/minqlx/{name}", download_plugin)
 
 	r.add_static("/static", STATIC, append_version=False)

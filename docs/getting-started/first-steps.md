@@ -40,8 +40,8 @@ The server then shows up in the rail on the left.
 ## 3. Enable a channel
 
 Select the server in the rail, then choose **Add channel** in the channel tree and pick a text channel.
-FragQ is now active there. You can also type `!enable_pubobot` in the channel itself, as with
-PUBobot2, or use `/channel enable`.
+FragQ is now active there. You can also type `!enable_fragq` in the channel itself, or use
+`/channel enable`.
 
 ![A server in the web panel](../assets/screenshots/server.png){ .shot loading=lazy }
 

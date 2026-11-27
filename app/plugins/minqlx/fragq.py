@@ -16,6 +16,11 @@ in Discord; that needs voice moves turned on for the queue. !fragq shows what th
 moves ("Last voice event") and how the last request went; the server log has every one.
 Admins can also move players by hand with !voice, for teams arranged in the game, with or without qlx_fragqVoice.
 
+With qlx_fragqLive 1 (the default; the key needs Send match results), the plugin keeps FragQ up to date while a
+match runs, for its !checkmatch command in Discord: state, map, mode, the clock, the round or minute, the team
+scores and every player's score, kills, deaths and damage. It sends at the countdown, the start, every round end and
+team change, and every 30 seconds, at most every 10 seconds, and the final score when the match ends.
+
 Setup, from the server console or rcon (the key must not be typed in chat):
     qlx !fragq url https://fragq.example.com
     qlx !fragq key fq_...
@@ -68,6 +73,7 @@ Cvars:
                             key's queues). Sent with every voice request and result; a queue name typed after
                             !voice takes precedence. Not case-sensitive. Needed when the key has several
                             queues with voice moves on; set it in server.cfg so a restart keeps it.
+    qlx_fragqLive           1 = send FragQ the live status of a running match, for !checkmatch (default 1)
     qlx_fragqQverifyLevel   permission level for !queueverify and !sub (default empty: qlx_fragqAdminLevel)
     qlx_fragqWhoisLevel     permission level for !whois (default 3)
     qlx_fragdexUrl          Fragdex address for !queueverify and !whois (shared with fragdex.py, whose saved address
@@ -96,7 +102,7 @@ except ImportError:
     STOP_ALL = ql.RET_STOP_ALL
     RUNTIME = "minqlx"
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 DB_URL = "minqlx:fragq:url"
 DB_KEY = "minqlx:fragq:key"
 DB_ENFORCE = "minqlx:fragq:enforce"
@@ -123,6 +129,13 @@ LOOKUP_BATCH = 64
 VOICE_SETTLE = 3          # seconds after the last team change before the teams are sent
 VOICE_COOLDOWN = 5        # between !voice commands
 VOICE_TARGETS = {"red", "blue", "lobby"}
+LIVE_HEARTBEAT = 30       # seconds between live status updates while a match runs (rounds and team changes send sooner)
+LIVE_MIN_GAP = 10         # at most one live status every this many seconds
+ROUND_MODES = {"ca", "ft", "ad", "rr"}   # modes played in rounds: the period is the round
+# what decides the other modes, besides the time limit: (Game attribute, unit)
+LIMITS = {"ctf": ("capturelimit", "captures"), "1f": ("capturelimit", "captures"), "har": ("capturelimit", "captures"),
+          "tdm": ("fraglimit", "frags"), "ffa": ("fraglimit", "frags"), "duel": ("fraglimit", "frags"),
+          "dom": ("scorelimit", "points")}
 COLOR_RE = re.compile(r"\^[0-9]")
 STEAM2_RE = re.compile(r"^STEAM_[0-5]:([01]):(\d{1,10})\Z", re.I)
 STEAM64_BASE = 76561197960265728
@@ -417,6 +430,7 @@ class fragq(ql.Plugin):
         self.set_cvar_once("qlx_fragqVoice", "0")
         self.set_cvar_once("qlx_voicemoveperm", "4")
         self.set_cvar_once("qlx_fragqQueue", "")
+        self.set_cvar_once("qlx_fragqLive", "1")
         self.set_cvar_once("qlx_fragqQverifyLevel", "")   # empty: qlx_fragqAdminLevel
         self.set_cvar_once("qlx_fragqWhoisLevel", "3")
         # Shared with fragdex.py; set_cvar_once never overwrites a value it has set.
@@ -446,6 +460,16 @@ class fragq(ql.Plugin):
         self._voice_sent = None        # {team: frozenset of SteamIDs} last sent, so game start doesn't repeat the countdown
         self._voice_event = "none since the plugin loaded"
         self._voice_cmd_at = 0.0
+        # Live status for FragQ's !checkmatch (POST /live): hooks only set these; the worker sends.
+        self._live_on = False          # a match is counting down or running
+        self._live_started = 0.0       # when it started (game_start), for the clock
+        self._live_round = 0           # rounds over (ROUND_OVER), in round modes
+        self._live_guid = None         # MATCH_GUID (MATCH_STARTED): the final result carries the same one
+        self._live_due = 0.0           # when the worker should take the next snapshot
+        self._live_out = None          # a snapshot waiting for the worker
+        self._live_sent = 0.0          # when the last one went out
+        self._live_off_why = None      # FragQ refused live status (too old, key without results): until the next map
+        self._live_last = "nothing sent yet"
         self._qv_busy = False          # a !queueverify / !sub check is running (set on the game thread, cleared by the worker)
         # !sub: Steam ID -> (raw name, replaced Steam ID or None, replaced raw name or None), game thread only,
         # for the FragQ match in _subs_match. Cleared when !queueverify finds a different match.
@@ -509,6 +533,7 @@ class fragq(ql.Plugin):
             "voice": _int(self.get_cvar("qlx_fragqVoice"), 0) != 0,
             "voice_perm": _int(self.get_cvar("qlx_voicemoveperm"), 4),
             "queue": " ".join(_clean(self.get_cvar("qlx_fragqQueue")).split())[:60],
+            "live": _int(self.get_cvar("qlx_fragqLive"), 1) != 0,
             "fragdex_url": _fragdex_api_url(dex_url or self.get_cvar("qlx_fragdexUrl")) or "",
             "fragdex_key": (dex_key or self.get_cvar("qlx_fragdexKey") or "").strip(),
             "fragdex_tls": _int(self.get_cvar("qlx_fragdexVerifyTls"), 1) != 0,
@@ -529,6 +554,11 @@ class fragq(ql.Plugin):
         if kind == "MATCH_STARTED":
             with self._lock:
                 self._match, self._report, self._finish_at = {}, None, 0.0
+                self._live_guid, self._live_round = str(data.get("MATCH_GUID") or "") or None, 0
+        elif kind == "ROUND_OVER":
+            with self._lock:
+                self._live_round = max(self._live_round, _int(data.get("ROUND"), self._live_round + 1))
+            self._live_poke()
         elif kind == "PLAYER_STATS":
             if data.get("WARMUP") or data.get("ABORTED"):
                 return
@@ -592,7 +622,9 @@ class fragq(ql.Plugin):
         with self._lock:
             self._match, self._report, self._finish_at = {}, None, 0.0
             self._voice_due, self._voice_out = 0.0, None
+            self._live_due, self._live_out = 0.0, None
         self._voice_live, self._voice_sent = False, None
+        self._live_on, self._live_started, self._live_off_why = False, 0.0, None
 
     # Voice moves follow the match: teams when the countdown starts (game_countdown, () on both runtimes), again at
     # game_start if they changed, after team changes, the lobby at game_end or an abort. game_start: (data) on
@@ -602,11 +634,20 @@ class fragq(ql.Plugin):
     def handle_game_countdown(self, *_):
         self.load_config()   # a qlx_fragqVoice or qlx_fragqQueue set in warmup counts from this match
         self._send_teams("countdown")
+        self._live_on, self._live_started = True, 0.0
+        with self._lock:
+            self._live_round = 0
+        self._live_push("countdown")
 
     def handle_game_start(self, *_):
         self._send_teams("match start", repeat=False)
+        self._live_on, self._live_started = True, time.time()
+        self._live_push("live")
 
     def handle_game_end(self, *_):
+        if self._live_on:   # the final score; the result follows with the same match id and replaces it
+            self._live_on = False
+            self._live_push("ended")
         self._voice_live, self._voice_sent = False, None
         if not self._cfg.get("voice"):
             self._note_voice("match end", "nothing sent, qlx_fragqVoice is 0")
@@ -624,12 +665,17 @@ class fragq(ql.Plugin):
     def handle_new_game(self, *_):
         # !abort and abort votes restart the map: new_game in warmup, and game_end never comes. A match starting
         # restarts the map too, so the state is read a second later, when a starting match is in progress.
-        if self._voice_live:
+        if self._voice_live or self._live_on:
             self._check_abort()
 
     @ql.delay(1)
     def _check_abort(self):
-        if not self._voice_live or self._state() != "warmup":
+        if self._state() != "warmup":
+            return
+        if self._live_on:
+            self._live_on = False
+            self._live_push("ended", note="Match aborted")
+        if not self._voice_live:
             return
         self._voice_live, self._voice_sent = False, None
         if not self._cfg.get("voice"):
@@ -646,6 +692,8 @@ class fragq(ql.Plugin):
             with self._lock:   # read the teams once the changes settle: one request for a whole shuffle
                 self._voice_due = time.time() + VOICE_SETTLE
             self._wake.set()
+        if self._live_on:
+            self._live_poke()
 
     def _state(self):
         try:
@@ -715,6 +763,93 @@ class fragq(ql.Plugin):
         """The teams after a team change, read on the game thread for the worker to send."""
         if self._state() in ("countdown", "in_progress"):
             self._send_teams("team change", repeat=False)
+
+    # Live status (FragQ's !checkmatch): the countdown, the match start, every round end and team change, and every
+    # LIVE_HEARTBEAT seconds while the match runs, at most every LIVE_MIN_GAP; the final score at game_end.
+
+    def _live_poke(self):
+        """Something changed: have the worker take a snapshot soon (any thread)."""
+        if not self._live_on:
+            return
+        with self._lock:
+            soon = max(time.time(), self._live_sent + LIVE_MIN_GAP)
+            self._live_due = min(self._live_due, soon) if self._live_due else soon
+        self._wake.set()
+
+    def _live_push(self, state, note=None):
+        """Read the game now and hand the snapshot to the worker (game thread)."""
+        if not self._cfg.get("live") or self._live_off_why:
+            return
+        payload = self._live_payload(state, note)
+        if payload:
+            with self._lock:
+                self._live_out, self._live_due = payload, 0.0
+            self._wake.set()
+
+    @ql.next_frame
+    def _live_snapshot(self):
+        """A snapshot the worker asked for (heartbeat, a round end), read on the game thread."""
+        if not self._live_on:
+            return
+        state = {"countdown": "countdown", "in_progress": "live"}.get(self._state())
+        if state:
+            self._live_push(state)
+
+    def _live_payload(self, state, note=None):
+        """The live status, in FragQ's game-neutral format (game thread). None when no game is loaded."""
+        try:
+            game = self.game
+            mode = str(game.type_short).lower()
+            arena = str(getattr(game, "map", "") or "")
+        except Exception:  # noqa: BLE001 - NonexistentGameError between maps
+            return None
+        team_mode = mode in TEAM_MODES
+        players = []
+        for p in self.players():
+            team, sid = _team(p.team), str(p.steam_id)
+            if team == "spectator" or not _is_steam_id(sid):
+                continue   # spectators and bots
+            st = getattr(p, "stats", None)
+            alive = getattr(p, "is_alive", None)
+            players.append({
+                "id": sid, "id_type": "steam", "name": _clean(p.name)[:64] or sid,
+                "team": team.capitalize() if team_mode and team in ("red", "blue") else None,
+                "alive": alive if isinstance(alive, bool) and state == "live" else None,
+                "stats": {"Score": _int(getattr(st, "score", getattr(p, "score", 0)), 0),
+                          "K": _int(getattr(st, "kills", 0), 0), "D": _int(getattr(st, "deaths", 0), 0),
+                          "Dmg": _int(getattr(st, "damage_dealt", 0), 0)},
+            })
+        players.sort(key=lambda x: (x["team"] or "", -x["stats"]["Score"]))
+        cfg = self._cfg
+        out = {"version": 1, "match_uid": self._live_guid, "state": state, "map": arena or None, "mode": mode.upper(),
+               "server": cfg.get("server") or None, "players": players[:64], "table": ["Score", "K", "D", "Dmg"]}
+        if cfg.get("queue"):
+            out["queue"] = cfg["queue"]
+        if team_mode:
+            out["teams"] = [{"name": "Red", "score": _int(getattr(game, "red_score", 0), 0)},
+                            {"name": "Blue", "score": _int(getattr(game, "blue_score", 0), 0)}]
+        elapsed = int(time.time() - self._live_started) if self._live_started and state != "countdown" else None
+        if elapsed is not None:
+            out["elapsed"] = elapsed
+        notes = [note] if note else []
+        if mode in ROUND_MODES:
+            with self._lock:
+                rounds = self._live_round
+            out["period"] = {"label": "Round", "current": rounds + 1 if state == "live" else max(rounds, 1)}
+            limit = _int(getattr(game, "roundlimit", 0), 0)
+            if limit:
+                notes.append(f"First to {limit} rounds")
+        else:
+            timelimit = _int(getattr(game, "timelimit", 0), 0)
+            if elapsed is not None:
+                out["period"] = {"label": "Minute", "current": elapsed // 60 + 1, "limit": timelimit or None}
+            attr, unit = LIMITS.get(mode, (None, None))
+            limit = _int(getattr(game, attr, 0), 0) if attr else 0
+            if limit:
+                notes.append(f"First to {limit} {unit}")
+        if notes:
+            out["note"] = " · ".join(notes)[:200]
+        return out
 
     def handle_unload(self, plugin):
         if plugin == self.__class__.__name__:
@@ -902,6 +1037,9 @@ class fragq(ql.Plugin):
             _opt("Auto voice moves", "on" if cfg.get("voice") else "off"),
             _opt("Last voice event", self._voice_event),
             _opt("Last voice request", self._voice_last),
+            _opt("Live status", ("on" if cfg.get("live") else "off") +
+                 (f" (^1stopped: {self._live_off_why}^7)" if self._live_off_why else "")),
+            _opt("Last live update", self._live_last),
         ]
         for line in lines:
             player.tell(_text(line))
@@ -1019,6 +1157,10 @@ class fragq(ql.Plugin):
                 wait = max(0.0, self._finish_at - time.time()) if self._report is not None else 5.0
                 if self._voice_due:
                     wait = min(wait, max(0.0, self._voice_due - time.time()))
+                if self._live_due:
+                    wait = min(wait, max(0.0, self._live_due - time.time()))
+                if self._live_out is not None:
+                    wait = 0.0
             if wait:
                 self._wake.wait(min(wait, 5.0))
             self._wake.clear()
@@ -1038,6 +1180,7 @@ class fragq(ql.Plugin):
                 if self._lookups:
                     self._run_lookups(cfg)
                 self._run_voice(cfg)
+                self._run_live(cfg)
             except Exception:  # noqa: BLE001 - keep the worker alive whatever a reply contains
                 self.logger.exception("fragq: worker error")
 
@@ -1165,6 +1308,39 @@ class fragq(ql.Plugin):
         summary = f"{moved} of {total} moved ({queue})" + (f": {rest}" if rest else "")
         self.logger.info(f"fragq: voice request ({label}): {summary}")
         self._voice_last = f"{stamp} {label}: {summary}"
+
+    # ------------------------------------------------------------ live status
+
+    def _run_live(self, cfg):
+        with self._lock:
+            item, self._live_out = self._live_out, None
+            due = bool(self._live_due) and time.time() >= self._live_due
+            if due:
+                self._live_due = 0.0
+        if due and item is None:
+            self._live_snapshot()   # comes back through _live_out
+        if item is None or not cfg.get("live"):
+            return
+        data, error, status = self._request(cfg, "POST", "/live", item)
+        now = time.time()
+        stamp = time.strftime('%H:%M')
+        self._live_sent = now
+        if error:
+            if status == 404:   # a FragQ older than 1.7 has no POST /live
+                self._live_off_why = "this FragQ has no live status yet (update FragQ)"
+            elif status == 403 and "result" in str(error).lower():
+                self._live_off_why = "the key can't send match results"
+            message = f"{stamp} {item['state']} failed: {error}" + (f"; stopped until the next map: {self._live_off_why}"
+                                                                    if self._live_off_why else "")
+            if message.split(" ", 1)[1] != self._live_last.split(" ", 1)[-1]:   # don't repeat the same warning every update
+                self.logger.warning(f"fragq: live status: {message}")
+        else:
+            where = f"match #{data.get('match_id')}" if data.get("match_id") else "no FragQ match"
+            message = f"{stamp} {item['state']}: {data.get('status') or 'sent'} ({where})"
+        self._live_last = message
+        with self._lock:   # the heartbeat, while the match runs
+            if self._live_on and not self._live_due and not self._live_off_why:
+                self._live_due = now + LIVE_HEARTBEAT
 
     @ql.thread
     def _manual_voice(self, reply_to, payload, label):

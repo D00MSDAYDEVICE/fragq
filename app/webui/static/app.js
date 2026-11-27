@@ -124,6 +124,32 @@
     });
   }
 
+  // A bar for a slow request (Discord calls on the server). The real progress is unknown, so it eases towards 90%
+  // over about as long as the same request took last time (`key`), and fills up when done() is called.
+  function progressBar(label, key, fallbackMs) {
+    var expected = fallbackMs;
+    try {
+      var last = +localStorage.getItem("fragq-took-" + key);
+      if (last) expected = Math.min(20000, Math.max(1500, last));
+    } catch (e) { /* ignore */ }
+    var fill = h("div", { class: "progress-fill" });
+    var el = h("div", { class: "progress", role: "progressbar", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": "100" },
+      h("div", { class: "progress-label", text: label }), h("div", { class: "progress-track" }, fill));
+    var start = Date.now(), timer = setInterval(tick, 100);
+    function set(p) { fill.style.width = p.toFixed(1) + "%"; el.setAttribute("aria-valuenow", Math.round(p)); }
+    function tick() { set(90 * (1 - Math.exp(-2.3 * (Date.now() - start) / expected))); }  // ~81% at `expected`
+    tick();
+    return {
+      el: el,
+      done: function () {
+        clearInterval(timer);
+        set(100);
+        try { localStorage.setItem("fragq-took-" + key, String(Date.now() - start)); } catch (e) { /* ignore */ }
+      },
+      stop: function () { clearInterval(timer); el.remove(); }
+    };
+  }
+
   var openPop = null;
   function closePop() { if (openPop) { var p = openPop; openPop = null; p.close(); } }
   // Show `content` in a floating panel next to `anchor` (fixed positioning so scroll containers don't clip it).
@@ -719,7 +745,7 @@
     append(m.body, [
       src ? h("p", {}, "Enable FragQ on another text channel with the settings of ", h("strong", { text: "#" + src.name }),
         " and a copy of its " + src.queues.length + " queue(s). Players, ratings, match history and the queue panel aren't copied.")
-        : h("p", { text: "Enable FragQ on a text channel. Same as typing !enable_pubobot there." }),
+        : h("p", { text: "Enable FragQ on a text channel. Same as typing !enable_fragq there." }),
       free.length ? [h("label", { class: "lbl", text: "Text channel" }), pk, h("div", { style: "margin-top:12px" }, warn)]
         : h("div", { class: "flash flash-warn", text: "Every text channel the bot can see is already enabled." }),
       err]);
@@ -832,7 +858,7 @@
     if (!S.guilds.length) {
       append(root, h("div", { class: "panel" }, h("div", { class: "empty-state" }, icon("discord"),
         h("h3", { text: "Add FragQ to your server" }),
-        h("p", { text: "Invite the bot, then type !enable_pubobot in a text channel or add the channel here. You see a server here if you administer it, hold a channel's admin role, or were given access on the Users page." }),
+        h("p", { text: "Invite the bot, then type !enable_fragq in a text channel or add the channel here. You see a server here if you administer it, hold a channel's admin role, or were given access on the Users page." }),
         S.me.bot.invite ? h("a", { class: "btn btn-primary", href: S.me.bot.invite, target: "_blank", rel: "noopener noreferrer" }, icon("plus"), "Invite the bot") : null)));
       return;
     }
@@ -876,9 +902,35 @@
         m.ranked ? h("span", { class: "badge ok", text: "ranked" }) : null,
         h("span", { class: "faint mono", text: ago(m.started) })),
       m.maps && m.maps.length ? h("div", { class: "muted", style: "margin-top:6px;font-size:13px", text: "Maps: " + m.maps.join(", ") }) : null,
-      h("div", { class: "teams" }, m.teams.map(function (t) {
+      m.live ? liveBlock(m.live) : h("div", { class: "teams" }, m.teams.map(function (t) {
         return h("div", { class: "team" }, h("b", { text: t.name }), h("div", { text: t.players.map(function (p) { return p ? p.name : "?"; }).join(", ") || "—" }));
       })));
+  }
+
+  // A match's live status from its game server (POST /live, bot/live.py): state, score and every player's stats.
+  function liveBlock(lv) {
+    var where = [lv.map, lv.mode].filter(Boolean).join(" · ");
+    return h("div", { class: "mc-live" + (lv.stale ? " stale" : "") },
+      h("div", { class: "mc-live-head" },
+        lv.state_label ? h("span", { class: "badge " + (lv.state === "live" || lv.state === "overtime" ? "ok" : ""), text: lv.state_label }) : null,
+        lv.period ? h("span", { class: "mono", text: lv.period }) : null,
+        lv.clock ? h("span", { class: "mono faint", text: lv.clock }) : null,
+        where ? h("span", { class: "muted", text: where }) : null),
+      lv.teams.length ? h("div", { class: "mc-score" }, lv.teams.map(function (t, i) {
+        return [i ? h("span", { class: "faint", text: "—" }) : null, h("span", {}, t.name + " ", h("b", { text: t.score == null ? "–" : String(t.score) }))];
+      })) : null,
+      lv.note ? h("p", { class: "muted mc-note", text: lv.note }) : null,
+      h("div", { class: "mc-groups" }, lv.groups.map(function (g) {
+        return h("div", { class: "scroll-x" }, h("table", { class: "dtable compact mc-table" },
+          h("thead", {}, h("tr", {}, h("th", { text: g.name + (g.score != null ? " (" + g.score + ")" : "") }),
+            lv.columns.map(function (c) { return h("th", { class: "num", text: c }); }))),
+          h("tbody", {}, g.players.map(function (p) {
+            return h("tr", { class: p.dead ? "dead" : "" }, h("td", { text: p.name + (p.dead ? " 💀" : "") }),
+              p.stats.map(function (v) { return h("td", { class: "num", text: String(v) }); }));
+          }))));
+      })),
+      h("p", { class: "faint mc-updated", text: "Updated " + ago(Date.now() / 1000 - lv.age) + " ago by " + lv.server +
+        (lv.stale ? " · stale: the game server stopped reporting" : "") }));
   }
 
   function chanName(id) {
@@ -940,7 +992,7 @@
           stat("Uptime", (d ? d + "d " : "") + hh + "h " + mm + "m"), stat("Latency", s.latency === null ? "—" : s.latency + " ms"),
           stat("Servers", s.guilds), stat("Channels", s.channels), stat("Queues", s.queues), stat("Active matches", s.active_matches)));
         var pre = h("pre", { class: "logbox" });
-        s.log.forEach(function (line) { pre.appendChild(h("div", { class: /\|ERROR>/.test(line) ? "e" : "", text: line })); });
+        s.log.forEach(function (line) { pre.appendChild(h("div", { class: /\|ERROR>/.test(line) ? "e" : /\|WARN>/.test(line) ? "w" : "", text: line })); });
         append(body, h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h2", { text: "Recent log" })), pre));
         pre.scrollTop = pre.scrollHeight;
       }).catch(function (e) { clear(body); append(body, h("div", { class: "flash flash-error", text: e.message })); });
@@ -1793,7 +1845,7 @@
       ev.description ? h("p", { class: "muted ev-desc", text: ev.description }) : null,
       ev.start_notice && ev.state === "scheduled" ? h("div", { class: "flash flash-error", style: "margin:10px 0 0" }, icon("alert"),
         h("span", { text: "The start time has passed but a team is short of players: fill the roster (Edit), then press Open check-in." })) : null,
-      teams,
+      ev.live ? liveBlock(ev.live) : teams,
       h("dl", { class: "conn-meta" }, meta.map(function (m) { return h("div", {}, h("dt", { text: m[0] }), h("dd", { text: m[1] })); }),
         h("div", { class: ev.discord_event_error ? "denied" : "" }, h("dt", { text: "Discord event" }), h("dd", {}, dEvent))),
       h("div", { class: "key-actions" },
@@ -2009,11 +2061,21 @@
         tournament_id: tourn.value };
       if (!opened) body.start_at = t;
       save.disabled = true;
+      err.show("");
+      var withEvent = st.discord_event && !st.private;
+      var bar = editing
+        ? progressBar("Saving, and updating the channels" + (withEvent ? " and the Discord event…" : "…"), "event-save", 3000)
+        : progressBar("Creating the channels" + (withEvent ? " and the Discord event…" : "…"), "event-create", 5000);
+      m.foot.insertBefore(bar.el, m.foot.firstChild);
       api(editing ? "PUT" : "POST", editing ? base + "/events/" + ev.id : base + "/events", body).then(function () {
-        m.close();
-        toast(editing ? "Event saved." : "Event created: its channels are ready.");
-        reload();
+        bar.done();
+        setTimeout(function () {  // let the full bar show for a moment
+          m.close();
+          toast(editing ? "Event saved." : "Event created: its channels are ready.");
+          reload();
+        }, 300);
       }).catch(function (e) {
+        bar.stop();
         save.disabled = false;
         err.show(e.message);
       });
@@ -2209,6 +2271,7 @@
       ["Last used", c.last_used_at ? fmtDate(c.last_used_at) + " from " + c.last_used_ip : "Never"],
       ["Requests", c.requests.toLocaleString()],
       ["Results", c.results ? c.results.toLocaleString() + ", last " + fmtDate(c.last_result_at) : "None yet"],
+      ["Last live update", c.live_at ? fmtDate(c.live_at) : "None since FragQ started"],
       ["Created", fmtDate(c.created_at) + (c.created_by ? " by " + c.created_by : "")],
     ];
     if (fragdex) meta = meta.filter(function (m) { return ["Queues", "Results without a FragQ match", "Results"].indexOf(m[0]) < 0; });
@@ -2224,7 +2287,8 @@
           c.can_link ? h("span", { class: "pchip", text: "Link Steam from game" }) : null,
           c.can_export ? h("span", { class: "pchip", text: "Read linked accounts" }) : null,
           c.can_voice ? h("span", { class: "pchip", text: "Move players in voice" }) : null,
-          c.slipgate_details ? h("span", { class: "pchip", text: "Slipgate details" }) : null)),
+          c.slipgate_details ? h("span", { class: "pchip", text: "Slipgate details" }) : null,
+          c.live_at ? h("span", { class: "pchip", title: "This connector sends live status, for !checkmatch", text: "Live status" }) : null)),
       h("dl", { class: "conn-meta" }, meta.map(function (m) { return h("div", { class: m[2] || "" }, h("dt", { text: m[0] }), h("dd", { text: m[1] })); })),
       h("div", { class: "key-actions" },
         h("button", { class: "btn btn-sm", type: "button", onclick: function () { connectorModal(d, base, c, reload); } }, icon("edit"), "Edit"),

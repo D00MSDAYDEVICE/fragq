@@ -31,6 +31,9 @@ LogLevelToInt = {
 }
 
 
+LEVEL_COLOURS = {'WARN': "\033[33m", 'ERROR': "\033[31m"}  # in a terminal; the web panel colours them itself
+
+
 class Log:
 
 	def __init__(self):
@@ -39,10 +42,12 @@ class Log:
 		self.recent = deque(maxlen=500)  # shown in the web interface
 
 	@staticmethod
-	def display(string):
+	def display(string, colour=None):
 		# Have to do this encoding/decoding because python fails to encode some symbols by default
 		encoding = sys.stdout.encoding or 'utf-8'
 		string = string.encode(encoding, 'ignore').decode(encoding)
+		if colour and sys.stdout.isatty():
+			string = colour + string + "\033[0m"
 
 		if readline is not None:
 			# Save user input line, print string and then user input line
@@ -57,7 +62,7 @@ class Log:
 			datetime.datetime.now().strftime("%d.%m.%Y (%H:%M:%S)"),
 			log_level,
 			str(data))
-		self.display(string)
+		self.display(string, LEVEL_COLOURS.get(log_level))
 		self.recent.append(string)
 		self.file.write(string + '\n')
 		self.file.flush()
@@ -80,6 +85,11 @@ class Log:
 	def info(self, data):
 		if self.loglevel <= 3:
 			self.log(data, 'INFO')
+
+	def warning(self, data):
+		""" Advice that goes with an error (shown in yellow, at the same log level as errors). """
+		if self.loglevel <= 4:
+			self.log(data, 'WARN')
 
 	def error(self, data):
 		if self.loglevel <= 4:

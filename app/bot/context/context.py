@@ -1,7 +1,8 @@
 from nextcord import abc
-from nextcord import Member, Embed
+from nextcord import Member, Embed, Forbidden, NotFound
 from enum import IntEnum
 import re
+import time
 
 import bot
 
@@ -9,6 +10,38 @@ from core.config import cfg
 from core.utils import error_embed, ok_embed, find
 from core.client import FakeMember, dc
 from core.console import log
+
+
+BLOCKED_LOG_EVERY = 600   # seconds between "can't post in this channel" log lines, per channel
+_blocked_logged = {}      # channel id: when it was last logged
+# What a queue channel needs. 50001 (can't see it) often hides a missing one of the others too.
+CHANNEL_PERMISSIONS = ("View Channel", "Send Messages", "Embed Links", "Attach Files", "Read Message History")
+
+
+def blocked(channel, e, what="post"):
+	"""
+	Log once in a while that Discord refused the bot in a channel (an error), with the permissions to check (a warning).
+	50001 Missing Access: the bot can't see the channel at all; 50013 Missing Permissions: it sees it but lacks one.
+	"""
+	cid = getattr(channel, "id", 0)
+	now = time.time()
+	if now - _blocked_logged.get(cid, 0) < BLOCKED_LOG_EVERY:
+		return
+	_blocked_logged[cid] = now
+	guild = getattr(getattr(channel, "guild", None), "name", "?")
+	name = getattr(channel, "name", "?")
+	code = getattr(e, "code", None)
+	if code == 50001:
+		why = "Discord says Missing Access: the bot can't see the channel"
+	elif code == 50013:
+		why = "Discord says Missing Permissions: the bot sees the channel but lacks a permission there"
+	else:
+		why = str(e)
+	log.error(f"Can't {what} in {guild}>#{name} ({cid}): {why}.")
+	log.warning(
+		f"Check that the bot has these permissions in #{name} or its category: "
+		f"{', '.join(CHANNEL_PERMISSIONS)}. Not logged again for this channel for {BLOCKED_LOG_EVERY // 60} minutes."
+	)
 
 
 class Context:
@@ -110,21 +143,28 @@ class SystemContext(Context):
 	def access_level(self):
 		return Context.Perms.ADMIN
 
+	async def _send(self, **kwargs):
+		""" A background message: if Discord refuses it (the bot lost access to the channel), log it and go on. """
+		try:
+			return await self.messagable.send(**kwargs)
+		except (Forbidden, NotFound) as e:
+			blocked(self.channel, e)
+
 	async def reply(self, content: str = None, embed: Embed = None):
-		await self.messagable.send(content=content, embed=embed)
+		await self._send(content=content, embed=embed)
 
 	async def notice(self, content: str = None, embed: Embed = None):
 		""" Send message in chat without replying if possible """
-		await self.messagable.send(content=content, embed=embed)
+		await self._send(content=content, embed=embed)
 
 	async def reply_dm(self, content: str = None, embed: Embed = None):
-		await self.messagable.send(content=content, embed=embed)
+		await self._send(content=content, embed=embed)
 
 	async def error(self, *args, **kwargs):
-		await self.messagable.send(embed=error_embed(*args, **kwargs))
+		await self._send(embed=error_embed(*args, **kwargs))
 
 	async def success(self, *args, **kwargs):
-		await self.messagable.send(embed=ok_embed(*args, **kwargs))
+		await self._send(embed=ok_embed(*args, **kwargs))
 
 
 class WebContext(Context):

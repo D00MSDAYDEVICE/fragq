@@ -301,6 +301,7 @@ async def delete(c):
 	connectors.pop(c["id"], None)
 	_dirty.discard(c["id"])
 	limiter.reset(c["id"])
+	bot.live.forget_connector(c["id"])
 
 
 async def restore(guild_id, x, queues, unmatched, old=None):
@@ -774,6 +775,7 @@ async def receive(c, data):
 		old = await db.select(["id", "match_id", "message_id"], "fragq_match_results",
 							  where=dict(connector_id=c["id"], match_uid=result["match_uid"]), one=True)
 		if old:
+			bot.live.result_in(c, result, dict(match_id=old["match_id"]) if old["match_id"] else None)   # still over
 			return dict(ok=True, status="duplicate", result_id=old["id"], match_id=old["match_id"], posted=bool(old["message_id"]))
 
 	match = await find_match(c, result) or _series_match(c, result)
@@ -784,6 +786,7 @@ async def receive(c, data):
 	if match is None and c["unmatched_queue"]:
 		queue, qc = next(((q, x) for q, x in queue_objects(c) if q.id == c["unmatched_queue"]), (None, None))
 	message_id = await post(c, result, match, qc) if qc else None
+	bot.live.result_in(c, result, match)   # the game is over: its live status has done its job
 	row = dict(
 		connector_id=c["id"], guild_id=c["guild_id"], channel_id=qc.id if qc else None, queue_id=queue.id if queue else None,
 		match_id=match["match_id"] if match else None, match_uid=result["match_uid"], at=int(time.time()),
@@ -1064,6 +1067,7 @@ async def on_init():
 @dc.event
 async def on_think(frame_time):
 	global _next_flush
+	bot.live.think(frame_time)
 	if frame_time > _next_flush and _dirty:
 		_next_flush = frame_time + USAGE_FLUSH
 		try:

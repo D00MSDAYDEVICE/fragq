@@ -57,7 +57,7 @@ The redirect FragQ sends doesn't match one listed in the Discord developer porta
 
 ## The bot is online but ignores `!add`
 
-- The channel must be enabled: **Add channel** in the web panel, or `!enable_pubobot`.
+- The channel must be enabled: **Add channel** in the web panel, or `!enable_fragq`.
 - The **Message Content Intent** must be on in the developer portal. Without it the bot can't read
   chat commands; slash commands and buttons still work.
 - Check the channel's **Command prefix**.
@@ -78,6 +78,27 @@ link does.
   channel's permission overrides can still take them away, and bots invited with an older link may not
   have Embed Links and Attach Files.
 - If the panel message was deleted, FragQ stops updating it; post a new one.
+
+## The log says *Can't post in …* or *Can't update the queue panel in …*
+
+Discord refused the bot in a queue channel. The red line names the server, the channel and its id; the yellow
+line after it lists the permissions to check:
+
+- View Channel
+- Send Messages
+- Embed Links
+- Attach Files
+- Read Message History
+
+Give them to the bot's role in the channel (**Edit Channel → Permissions**), or on its category if the channel is
+synced with it. *Missing Access* means the bot can't see the channel at all, and Discord then shows the bot the
+channel's name as `#___hidden___`. Other permissions are often missing as well, so check them all. FragQ posts
+there again as soon as it has them; no restart is needed. It logs each channel once every 10 minutes in the
+meantime, and expired players are still removed from its queues.
+
+To find a channel by its id, type `<#id>` in any channel (for example `<#1021775739428810772>`): Discord shows it
+as a link to that channel. If the channel shouldn't be a queue any more, type `!disable_fragq` there once the bot
+can see it again.
 
 ## Changes in the web panel don't show up after an update
 

@@ -525,6 +525,16 @@ async def _map(
 _map.on_autocomplete("queue")(autocomplete.queues)
 
 
+@dc.slash_command(name='checkmatch', description='Live status of the matches in progress (score, round, players).', **guild_kwargs)
+async def _checkmatch(
+	interaction: Interaction,
+	match: str = SlashOption(
+		name="match", required=False,
+		description="A match number, a queue, or a QueueGen event. Empty: every match in progress here."),
+): await run_slash(bot.live.check, interaction=interaction, target=match)
+_checkmatch.on_autocomplete("match")(autocomplete.live_matches)
+
+
 @dc.slash_command(name='matches', description='Show active matches on the channel.', **guild_kwargs)
 async def _matches(
 		interaction: Interaction

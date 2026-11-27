@@ -38,6 +38,7 @@ from core.utils import get_nick, error_embed
 
 import bot
 from bot.context.slash.context import SlashContext
+from bot.context.context import blocked
 
 PREFIX = "fragq:"
 MAX_QUEUES = 20          # 4 rows of 5 join buttons, the 5th row holds Leave and the moderator buttons
@@ -270,7 +271,9 @@ async def refresh(qc, force=False):
 		log.info(f"Queue panel in #{channel.name} was deleted.")
 		await _set_message_id(qc, None)
 		_state.pop(qc.id, None)
-	except (Forbidden, HTTPException) as e:
+	except Forbidden as e:
+		blocked(channel, e, what="update the queue panel")
+	except HTTPException as e:
 		log.error(f"Failed to update queue panel in #{channel.name}: {e}")
 
 

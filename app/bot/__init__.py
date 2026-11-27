@@ -27,6 +27,7 @@ from . import series
 from . import fragdex
 from . import slipgate
 from . import queuegen
+from . import live
 
 bot_was_ready = False
 bot_ready = False

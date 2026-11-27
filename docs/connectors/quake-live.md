@@ -159,6 +159,22 @@ If the server also runs [Slipgate](https://slipgate.gg)'s plugin, turn on **Add 
 its connector: once Slipgate has the match, the posted result gets a link to it, its top highlights and its demos.
 See [Slipgate details on results](../administration/slipgate.md#slipgate-details-on-results).
 
+## Live status
+
+While a match runs, the plugin keeps FragQ up to date, so [`!checkmatch`](../reference/commands.md#matches) in
+Discord shows how it stands. Plugin 1.7.0 or later, on by default (`qlx_fragqLive 0` turns it off); the key needs
+**Send match results**.
+
+| Sent | |
+|---|---|
+| When | At the countdown, when the match starts, at every round end and team change, and every 30 seconds while it runs (at most every 10 seconds); the final score when it ends, *Match aborted* after an abort |
+| What | State, map, mode, the clock, the team scores, and each player's team, score, kills, deaths and damage, and who is dead at that moment (most useful in round modes) |
+| Period | CA, Freeze Tag, Attack & Defend and Red Rover: the round, with *First to N rounds*. Other modes: the minute of the time limit, with *First to N captures / frags* |
+
+The final result uses the same match id, so it replaces the live status in FragQ. `!fragq` shows **Live status**
+and the **Last live update**. If FragQ refuses live status (a FragQ before 1.7, or a key without **Send match
+results**), the plugin stops sending until the next map, and `!fragq` says why.
+
 ## !link
 
 ```text
@@ -289,7 +305,7 @@ It shows who is behind a Steam account, so it needs permission level 3 by defaul
 | `!linkenforce [on\|off]` | `qlx_fragqAdminLevel` | Require linked Steam accounts to play |
 | `!setdiscord <invite URL>` | `qlx_fragqAdminLevel` | The Discord invite shown to players; `off` removes it |
 | `!voice teams` / `lobby` / `<player id> red\|blue\|lobby` `[queue]` | `qlx_voicemoveperm` | [Move players in voice](#moving-players-by-hand) now |
-| `!fragq` | `qlx_fragqAdminLevel` | Status, one setting per line: address, key, results and the last one sent, link required, Discord invite, queue, auto voice moves (`qlx_fragqVoice`), the last voice event and the last voice request |
+| `!fragq` | `qlx_fragqAdminLevel` | Status, one setting per line: address, key, results and the last one sent, link required, Discord invite, queue, auto voice moves (`qlx_fragqVoice`), the last voice event and the last voice request, live status and the last live update |
 | `!fragq queue` | `qlx_fragqAdminLevel` | The key's queues (channel, voice moves on or off, which one `qlx_fragqQueue` picks) and the Discord server's queues the key doesn't have |
 | `!fragq url <address>` | 5 | Set the FragQ address |
 | `!fragq key <key>` | 5, console / rcon only | Set the connector key |
@@ -315,6 +331,7 @@ It shows who is behind a Steam account, so it needs permission level 3 by defaul
 | `qlx_fragqVoice` | `0` | `1` = move players between the queue's Discord voice channels ([voice moves](#voice-moves)) |
 | `qlx_voicemoveperm` | `4` | Permission level for [`!voice`](#moving-players-by-hand) |
 | `qlx_fragqQueue` | | The FragQ queue this server plays, in any case. Sent with voice moves and results ([several servers and queues](#several-servers-and-queues)) |
+| `qlx_fragqLive` | `1` | `0` = don't send FragQ the [live status](#live-status) of running matches |
 | `qlx_fragqQverifyLevel` | `qlx_fragqAdminLevel` | Permission level for `!queueverify` and `!sub` |
 | `qlx_fragqWhoisLevel` | `3` | Permission level for `!whois` |
 | `qlx_fragdexUrl`, `qlx_fragdexKey` | | Fragdex's address and key, for `!queueverify` and `!whois`. Shared with `fragdex.py`, whose saved values take precedence |

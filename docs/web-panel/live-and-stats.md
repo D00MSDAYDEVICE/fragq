@@ -6,6 +6,12 @@ A channel's **Live** tab shows each queue with its players and how full it is, a
 progress. It updates by itself while you look at it. The server overview shows the same for all
 channels of a server.
 
+When a match's game server sends [live status](../connectors/result-format.md#live-status) (the Quake Live plugin
+does, from 1.7.0), its card shows how the game stands instead of the plain teams: the state, round or minute, clock,
+map and mode, the score, and a table per team with every player's stats (💀 for dead players), with when it was
+last updated. Unranked matches, which FragQ stops following once they start, stay on the Live tab while their game
+server keeps reporting. It's the same information as [`!checkmatch`](../reference/commands.md#matches) in Discord.
+
 ![The Live tab](../assets/screenshots/live.png){ .shot loading=lazy }
 
 ## Leaderboard

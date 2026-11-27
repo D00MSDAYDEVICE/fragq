@@ -13,6 +13,13 @@ async def queues(interaction: Interaction, queue: str) -> List[str]:
 		return []
 
 
+async def live_matches(interaction: Interaction, match: str) -> List[str]:
+	""" /checkmatch: the channel's queues and matches, and the server's running QueueGen events. """
+	if (qc := bot.queue_channels.get(interaction.channel_id)) is None:
+		return []
+	return bot.live.choices(qc, match)
+
+
 async def qc_variables(interaction: Interaction, variable: str) -> List[str]:
 	return sorted([v for v in bot.QueueChannel.cfg_factory.variables.keys() if v.startswith(variable)])[:10]
 

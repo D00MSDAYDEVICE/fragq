@@ -25,11 +25,15 @@ async def on_think(frame_time):
 			]))
 			bot.active_matches.remove(match)
 			break
-	await bot.series.think(frame_time)
-	await bot.expire.think(frame_time)
-	await bot.noadds.think(frame_time)
-	await bot.stats.jobs.think(frame_time)
-	await bot.expire_auto_ready(frame_time)
+	# Each on its own: one failing (say, a channel the bot lost access to) mustn't skip the others.
+	for name, job in (
+		("series", bot.series.think), ("expire", bot.expire.think), ("noadds", bot.noadds.think),
+		("stats jobs", bot.stats.jobs.think), ("auto ready", bot.expire_auto_ready),
+	):
+		try:
+			await job(frame_time)
+		except Exception as e:
+			log.error(f"Error in the {name} background task: {e}\n{traceback.format_exc()}")
 
 
 @dc.event
@@ -40,9 +44,9 @@ async def on_message(message):
 	if message.channel.type != ChannelType.text:
 		return
 
-	if message.content == '!enable_pubobot':
+	if message.content == '!enable_fragq':
 		await bot.enable_channel(message)
-	elif message.content == '!disable_pubobot':
+	elif message.content == '!disable_fragq':
 		await bot.disable_channel(message)
 
 
